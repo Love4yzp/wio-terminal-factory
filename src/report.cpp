@@ -19,7 +19,9 @@ void reportSet(TestId id, bool pass, const char *fmt, ...) {
   va_list ap; va_start(ap, fmt);
   vsnprintf(r.detail, sizeof(r.detail), fmt, ap);
   va_end(ap);
-  Serial.printf("[%s] %-10s %s\r\n", pass ? " OK " : "FAIL", r.name, r.detail);
+  // 避免 SAMD Print::printf 80 字节缓冲区截断换行
+  Serial.printf("[%s] %-10s ", pass ? " OK " : "FAIL", r.name);
+  Serial.println(r.detail);
 }
 
 bool reportAllPass() {
@@ -40,21 +42,26 @@ void reportPrintFinal(uint32_t totalMs) {
   Serial.println(F("\r\n+------------+------+--------+------------------------------------------------+"));
   Serial.println(F("| ITEM       | RES  | ms     | DETAIL                                         |"));
   Serial.println(F("+------------+------+--------+------------------------------------------------+"));
-  for (auto &r : g_results)
-    Serial.printf("| %-10s | %-4s | %6lu | %-46.46s |\r\n", r.name,
-                  r.status == ST_PASS ? "OK" : "FAIL", (unsigned long)r.ms, r.detail);
+  for (auto &r : g_results) {
+    Serial.printf("| %-10s | %-4s | %6lu | ", r.name,
+                  r.status == ST_PASS ? "OK" : "FAIL", (unsigned long)r.ms);
+    Serial.printf("%-46.46s |\r\n", r.detail);
+  }
   Serial.println(F("+------------+------+--------+------------------------------------------------+"));
-  Serial.printf("RESULT: %s   MAC: %s   RTL FW: %s   TIME: %lu ms   FW: %s\r\n",
-                ok ? "PASS" : "REPAIR", g_mac, g_rtlVer, (unsigned long)totalMs, FW_VERSION);
+  Serial.printf("RESULT: %s  MAC: %s\r\n", ok ? "PASS" : "REPAIR", g_mac);
+  Serial.printf("RTL FW: %s  TIME: %lu ms  FW: ", g_rtlVer, (unsigned long)totalMs);
+  Serial.println(FW_VERSION);
   if (g_wifiFallback) Serial.println(F("NOTE: WIFI SSID not configured -> fallback band check"));
   Serial.print(F("JSON:{\"fw\":")); jsonStr(FW_VERSION);
   Serial.print(F(",\"build_id\":")); jsonStr(FW_BUILD_ID);
-  Serial.printf(",\"result\":\"%s\",\"total_ms\":%lu,\"mac\":", ok ? "PASS" : "REPAIR", (unsigned long)totalMs);
-  jsonStr(g_mac); Serial.print(F(",\"rtl_fw\":")); jsonStr(g_rtlVer);
+  Serial.printf(",\"result\":\"%s\",\"total_ms\":%lu,", ok ? "PASS" : "REPAIR", (unsigned long)totalMs);
+  Serial.print(F("\"mac\":")); jsonStr(g_mac);
+  Serial.print(F(",\"rtl_fw\":")); jsonStr(g_rtlVer);
   Serial.printf(",\"wifi_fallback\":%s,\"items\":[", g_wifiFallback ? "true" : "false");
   for (int i = 0; i < T_COUNT; i++) {
-    Serial.printf("%s{\"name\":\"%s\",\"pass\":%s,\"ms\":%lu,\"detail\":", i ? "," : "", g_results[i].name,
-                  g_results[i].status == ST_PASS ? "true" : "false", (unsigned long)g_results[i].ms);
+    Serial.printf("%s{\"name\":\"%s\",\"pass\":%s,", i ? "," : "", g_results[i].name,
+                  g_results[i].status == ST_PASS ? "true" : "false");
+    Serial.printf("\"ms\":%lu,\"detail\":", (unsigned long)g_results[i].ms);
     jsonStr(g_results[i].detail); Serial.print('}');
   }
   Serial.println(F("]}"));

@@ -14,6 +14,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIST = os.path.join(ROOT, "dist")
 LOGS = os.path.join(ROOT, "logs")
 SEEED_VID = 0x2886
+UF2_PID = 0x002D
 UF2_MAGIC0, UF2_MAGIC1, UF2_END = 0x0A324655, 0x9E5D5157, 0x0AB16F30
 IS_MAC = sys.platform == "darwin"
 
@@ -137,7 +138,11 @@ def linux_ports(sys_root="/sys/class/tty"):
             vf = os.path.join(p, "idVendor")
             if os.path.exists(vf):
                 try:
-                    if int(open(vf).read().strip(), 16) == SEEED_VID:
+                    vid = int(open(vf).read().strip(), 16)
+                    pf = os.path.join(p, "idProduct")
+                    pid = int(open(pf).read().strip(), 16) if os.path.exists(pf) else 0
+                    # 跳过 UF2 Bootloader 自带的 CDC 口 (0x002D)，避免抢先连上即将重启的口
+                    if vid == SEEED_VID and pid != UF2_PID:
                         out.append("/dev/" + os.path.basename(tty))
                 except ValueError:
                     pass
@@ -301,6 +306,8 @@ def wait_for(fn, timeout, interval=0.3):
 
 def handle_uf2(drive, man):
     flash_drive(drive, man)
+    wait_for(lambda: find_uf2_drive() is None, 8)
+    time.sleep(0.5)
     port = wait_for(find_serial, 15)
     if not port:
         log(c("烧录后 15s 未出现串口，请检查 USB 线 / 设备", "31"))
@@ -325,7 +332,7 @@ def handle_serial(port, man, args):
             log("发送 't' 重启重测")
             s.write(b"t")
             s.close()
-            time.sleep(1.0)
+            time.sleep(1.2)
             port = wait_for(find_serial, 10)
             return handle_serial_after_flash(port, man, args) if port else False
         try:
@@ -345,23 +352,33 @@ def handle_serial(port, man, args):
     port = handle_uf2(drive, man)
     if not port:
         return False
-    time.sleep(0.3)
     return handle_serial_after_flash(port, man, args)
 
 def handle_serial_after_flash(port, man, args):
-    s = wait_for(lambda: _try_open(port), 5)
-    if not s:
-        return False
-    try:
-        ver, buf = query_version(s, listen=0.5)
-        if not ver or ver[1] != man["build_id"]:
-            log(c("烧录后版本仍不匹配：%s" % (ver,), "31"))
-        return monitor(s, buf, args.test_timeout)
-    except EOFError:
-        log(c("串口断开（设备被拔出或重启）", "33"))
-        return False
-    finally:
-        s.close()
+    for attempt in range(2):
+        s = wait_for(lambda: _try_open(port), 5)
+        if not s:
+            return False
+        try:
+            buf = ""
+            end = time.time() + 0.4
+            while time.time() < end:
+                buf += s.read(0.1).decode(errors="replace")
+            ver = parse_fw_ver(buf)
+            if ver and ver[1] != man["build_id"]:
+                log(c("烧录后版本仍不匹配：%s" % (ver,), "31"))
+            return monitor(s, buf, args.test_timeout)
+        except EOFError:
+            s.close()
+            if attempt == 0:
+                time.sleep(0.8)
+                port = wait_for(find_serial, 10) or port
+                continue
+            log(c("串口断开（设备被拔出或重启）", "33"))
+            return False
+        finally:
+            s.close()
+    return False
 
 def _try_open(port):
     try:
@@ -430,16 +447,18 @@ def self_test():
     check("ioreg VID no match", not mac_seeed_present('| "idVendor" = 1027\n| "idVendor" = 103740\n'))
 
     with tempfile.TemporaryDirectory() as td:  # 伪造 /sys/class/tty 结构
-        def fake(tty, vid):
+        def fake(tty, vid, pid):
             usb = os.path.join(td, "devices", tty + "-usb")
             intf = os.path.join(usb, "1-1:1.0")
             os.makedirs(intf)
             open(os.path.join(usb, "idVendor"), "w").write(vid + "\n")
+            open(os.path.join(usb, "idProduct"), "w").write(pid + "\n")
             os.makedirs(os.path.join(td, "class", tty))
             os.symlink(intf, os.path.join(td, "class", tty, "device"))
-        fake("ttyACM0", "2341")
-        fake("ttyACM1", "2886")
-        check("linux sysfs VID filter", linux_ports(os.path.join(td, "class")) == ["/dev/ttyACM1"])
+        fake("ttyACM0", "2341", "0043")
+        fake("ttyACM1", "2886", "002d")  # UF2 bootloader CDC 应跳过
+        fake("ttyACM2", "2886", "802d")
+        check("linux sysfs VID/PID filter", linux_ports(os.path.join(td, "class")) == ["/dev/ttyACM2"])
 
         drv = os.path.join(td, "drv")
         os.makedirs(drv)

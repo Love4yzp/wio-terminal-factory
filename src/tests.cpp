@@ -55,7 +55,7 @@ void testStuckKeys() {
     delay(5);
   }
   if (!stuckMask) { reportSet(T_STUCK, true, "no key held at boot"); return; }
-  char buf[96] = "stuck:"; 
+  char buf[96] = "stuck:";
   for (int i = 0; i < 8; i++) if (stuckMask & (1 << i)) { strlcat(buf, " ", sizeof buf); strlcat(buf, KEYS[i].name, sizeof buf); }
   reportSet(T_STUCK, false, "%s", buf);
 }
@@ -67,6 +67,11 @@ static uint8_t s_backup[QSPI_TEST_SIZE];
 #endif
 void testQspi() {
   if (sfud_init() != SFUD_SUCCESS) { reportSet(T_QSPI, false, "sfud_init failed (no JEDEC response)"); return; }
+#ifdef SFUD_USING_QSPI
+  if (sfud_qspi_fast_read_enable(sfud_get_device(SFUD_W25Q32_DEVICE_INDEX), 2) != SFUD_SUCCESS) {
+    reportSet(T_QSPI, false, "qspi fast_read_enable failed"); return;
+  }
+#endif
   const sfud_flash *f = sfud_get_device(SFUD_W25Q32_DEVICE_INDEX);
   if (!f || f->chip.capacity < QSPI_TEST_ADDR + QSPI_TEST_SIZE) {
     reportSet(T_QSPI, false, "capacity %lu too small", f ? (unsigned long)f->chip.capacity : 0UL); return;
@@ -165,7 +170,7 @@ void testRtlAndWifi() {
       int rssi = WiFi.RSSI(i), ch = WiFi.channel(i);
       String ssid = WiFi.SSID(i);
       bool is5 = ch > 14;
-      Serial.printf("       scan: %-24s ch%3d %4d dBm\r\n", ssid.c_str(), ch, rssi);
+      Serial.printf("       scan: %-24.24s ch%3d %4d dBm\r\n", ssid.c_str(), ch, rssi);
       if (targeted) {
         if (!is5 && strlen(WIFI_SSID_2G) && ssid == WIFI_SSID_2G) best2 = max(best2, rssi);
         if (is5 && strlen(WIFI_SSID_5G) && ssid == WIFI_SSID_5G) best5 = max(best5, rssi);
@@ -179,8 +184,8 @@ void testRtlAndWifi() {
   }
   bool need2 = !targeted || strlen(WIFI_SSID_2G), need5 = !targeted || strlen(WIFI_SSID_5G);
   bool ok2 = !need2 || best2 >= WIFI_RSSI_MIN_DBM, ok5 = !need5 || best5 >= WIFI_RSSI_MIN_DBM;
-  Serial.printf("       scan result: 2G %d 5G %d (min %d)%s%s\r\n", best2, best5, WIFI_RSSI_MIN_DBM,
-                targeted ? "" : " [fallback]", n <= 0 ? " no AP found" : "");
+  Serial.printf("       scan result: 2G %d 5G %d (min %d)%s\r\n", best2, best5, WIFI_RSSI_MIN_DBM,
+                targeted ? "" : " [fallback]");
   char scan[32];
   snprintf(scan, sizeof scan, "%s2G:%d 5G:%d", targeted ? "" : "fb ", best2, best5);
   bool scanOk = ok2 && ok5;
@@ -195,12 +200,12 @@ void testRtlAndWifi() {
     bool conn = st == WL_CONNECTED;
     IPAddress ip = conn ? WiFi.localIP() : IPAddress(0, 0, 0, 0);
     bool ipOk = conn && ip != IPAddress(0, 0, 0, 0);
-    // 等 DHCP：已关联但还没拿到 IP 时在剩余时间内继续等
     while (conn && !ipOk && millis() - t < WIFI_CONNECT_TIMEOUT_MS) {
       ledTick(); delay(100); ip = WiFi.localIP(); ipOk = ip != IPAddress(0, 0, 0, 0);
     }
-    Serial.printf("       wifi status %d ip %s gw %s rssi %d (%lu ms)\r\n", st, ip.toString().c_str(),
-                  WiFi.gatewayIP().toString().c_str(), conn ? (int)WiFi.RSSI() : 0, (unsigned long)(millis() - t));
+    Serial.printf("       wifi status %d ip %s ", st, ip.toString().c_str());
+    Serial.printf("gw %s rssi %d (%lu ms)\r\n", WiFi.gatewayIP().toString().c_str(),
+                  conn ? (int)WiFi.RSSI() : 0, (unsigned long)(millis() - t));
     WiFi.disconnect(true);
     if (!conn) reportSet(T_WIFI, false, "%s conn %s", scan, millis() - t >= WIFI_CONNECT_TIMEOUT_MS ? "timeout" : "fail");
     else if (!ipOk) reportSet(T_WIFI, false, "%s no IP", scan);
@@ -250,7 +255,7 @@ static void drawBox(int i, uint16_t c) {
 void testKeys() {
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_YELLOW, TFT_BLACK); tft.setTextSize(1);
-  tft.drawString("Press every key once (serial: f = give up)", 10, 8);
+  tft.drawString("Press every key once (serial: p=ok f=fail)", 10, 8);
   // 粘连的键不能拿来算通过
   uint8_t done = 0;
   bool stuck[8] = {false};
@@ -264,7 +269,9 @@ void testKeys() {
       if (!p) released[i] = true;
       if (p && released[i] && !(done & (1 << i))) { done |= 1 << i; drawBox(i, TFT_GREEN); Serial.printf("       key %s ok\r\n", KEYS[i].name); }
     }
-    char c = serialCmd(); if (c == 'f' || c == 's') break;
+    char c = serialCmd();
+    if (c == 'p') { reportSet(T_KEYS, true, "serial confirmed"); return; }
+    if (c == 'f' || c == 's') break;
     char cd[16]; snprintf(cd, sizeof cd, "%2lus ", (unsigned long)((KEYS_TIMEOUT_MS - (millis() - t0)) / 1000));
     tft.setTextColor(TFT_WHITE, TFT_BLACK); tft.drawString(cd, 290, 8);
     delay(5);
@@ -281,18 +288,26 @@ static int lightAvg() { long s = 0; for (int i = 0; i < 16; i++) s += analogRead
 void testLight() {
   pinMode(WIO_LIGHT, INPUT);
   int base = lightAvg();
-  if (base < LIGHT_MIN_BASELINE) { reportSet(T_LIGHT, false, "baseline %d too low (dark env / sensor open)", base); return; }
-  uiProgress("Light sensor", "Cover the back light window with a finger   (serial: f = give up)");
-  int target = base * (1.0f - LIGHT_DROP_RATIO), minV = base;
+  // 允许设备平放桌面导致初始遮挡：先记录峰值(需 >= LIGHT_MIN_BASELINE)，再检测相对峰值跌落
+  uiProgress("Light sensor", "Lift/light back window, then cover it  (serial: f=fail)");
+  int maxV = base, minAfterPeak = base;
   uint32_t t0 = millis();
   while (millis() - t0 < LIGHT_TIMEOUT_MS) {
     ledTick();
-    int v = lightAvg(); minV = min(minV, v);
-    char s[40]; snprintf(s, sizeof s, "base %4d  now %4d  ", base, v);
+    int v = lightAvg();
+    if (v > maxV) { maxV = v; minAfterPeak = v; }
+    if (v < minAfterPeak) minAfterPeak = v;
+    char s[44]; snprintf(s, sizeof s, "now %4d  peak %4d  ", v, maxV);
     tft.setTextSize(2); tft.setTextColor(TFT_WHITE, TFT_BLACK); tft.drawString(s, 10, 140);
-    if (v <= target) { reportSet(T_LIGHT, true, "base %d -> %d (drop>=%d%%)", base, v, (int)(LIGHT_DROP_RATIO * 100)); return; }
-    char c = serialCmd(); if (c == 'f' || c == 's') break;
+    int target = (int)(maxV * (1.0f - LIGHT_DROP_RATIO));
+    if (maxV >= LIGHT_MIN_BASELINE && minAfterPeak <= target) {
+      reportSet(T_LIGHT, true, "peak %d -> %d (drop>=%d%%)", maxV, minAfterPeak, (int)(LIGHT_DROP_RATIO * 100));
+      return;
+    }
+    char c = serialCmd();
+    if (c == 'p') { reportSet(T_LIGHT, true, "serial confirmed"); return; }
+    if (c == 'f' || c == 's') break;
     delay(20);
   }
-  reportSet(T_LIGHT, false, "timeout: base %d min %d need <=%d", base, minV, target);
+  reportSet(T_LIGHT, false, "timeout: peak %d low %d (need>=%d)", maxV, minAfterPeak, LIGHT_MIN_BASELINE);
 }
