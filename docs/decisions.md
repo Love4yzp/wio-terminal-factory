@@ -54,3 +54,17 @@
 * **状态**：已确定
 * **内容**：将 `SEEED-Guest` / `SeeedGuest22` 写入 `include/test_config.h` 作为默认测试 Wi-Fi 配置（注意 `dist/manifest.json` 不写入密码字段）。
 * **测试要求**：Wi-Fi 测项在完成双频扫描（确认 2.4G / 5G 均能扫到且信号达标）后，**直接调用 `WiFi.begin` 实际连接 `SEEED-Guest` 并获取 DHCP IP**，验证射频收发（TX/RX）与协议栈链路完整可用，测试结束后断开连接清理状态。
+
+## D-009：Phase 1 MVP 改为「纯固件自动检测 + 多 Tab 实时交互看板」，默认不采集日志
+* **日期**：2026-11-16
+* **状态**：已确定（调整 D-003/D-007 交互与脚本默认行为）
+* **内容**：
+  * **取消所有强制人工确认与超时阻塞步骤**：不再在主流程中卡住等待 `LCD_BL`、`KEYS_5WAY`、`LIGHT` 按键确认或超时。上电即自动跑完 6 项全自动检查（`STUCK_KEY`、`QSPI_FLASH`、`IMU (LIS3DHTR)`、`BUZZER_MIC`、`RTL8720`、`WIFI_2G5G`）并立即给出 `PASS` / `REPAIR` 总结论（不依赖电脑或串口，接通供电即可独立展示）。
+  * **多 Tab 交互式仪表盘（参考 `Love4yzp/wio-onboard-demo`）**：通过 5 向摇杆 `LEFT / RIGHT` 切换 Tab（摇杆不可用或翻页无响应即直接暴露滑杆故障）：
+    * Tab 1 (`Auto Check`)：首 Tab 直接显示总判定与每项自动检测的 `[PASS]` / `[FAIL]` 明细（按 `A` 重测）；
+    * Tab 2 (`Wi-Fi / Net`)：`RTL8720` 固件/MAC、2.4G/5G 信号与连网 IP 详情（按 `A` 重扫连网）；
+    * Tab 3 (`IMU`)：`LIS3DHTR` 气泡水平仪 + 三轴 ±2g 实时交互；
+    * Tab 4 (`Audio`)：`WIO_MIC` 实时波形 + VU 峰值柱（`A` 冻结，`B` 发 4kHz 测试音）；
+    * Tab 5 (`Light & IO`)：`WIO_LIGHT` 实时光照柱 + `A/B/C` 音阶发声 + 8 键实时点亮指示；
+    * Tab 6 (`LCD & Sys`)：内置 R/G/B/白/黑与灰阶目视条 + 系统版本/Build ID/内存/运行时间（按 `A` 触发全屏纯色轮播）。
+  * **脚本侧默认只刷机、不采集**：`tools/auto_flash.py` 默认只负责识别设备、比对 `build_id` 并快速 UF2 烧录（刷完盘符卸载即完成），不再默认等待串口跑完或保存 `logs/*.json` / `.log`；串口仍保留文本/JSON 报告输出与可选 `--monitor` 调试模式。
