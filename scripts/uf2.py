@@ -1,5 +1,5 @@
 # PlatformIO post-build: firmware.bin -> firmware.uf2 (SAMD51, app base 0x4000, family 0x55114460)
-import struct
+import hashlib, json, os, re, shutil, struct
 Import("env")
 
 UF2_MAGIC0, UF2_MAGIC1, UF2_END = 0x0A324655, 0x9E5D5157, 0x0AB16F30
@@ -16,8 +16,37 @@ def bin_to_uf2(src, dst):
     open(dst, "wb").write(out)
     print("UF2 written: %s (%d blocks)" % (dst, n))
 
+def cfg_str(text, name):
+    m = re.search(r'#define\s+%s\s+"([^"]*)"' % name, text)
+    return m.group(1) if m else None
+
 def after_bin(source, target, env):
     b = target[0].get_abspath()
-    bin_to_uf2(b, b[:-4] + ".uf2")
+    uf2 = b[:-4] + ".uf2"
+    bin_to_uf2(b, uf2)
+    root = env.subst("$PROJECT_DIR")
+    dist = os.path.join(root, "dist")
+    os.makedirs(dist, exist_ok=True)
+    shutil.copyfile(uf2, os.path.join(dist, "wio-factory-test.uf2"))
+    data = open(b, "rb").read()
+    n = (len(data) + 255) // 256
+    payload = data.ljust(n * 256, b"\x00")
+    cfg = open(os.path.join(root, "include", "test_config.h"), encoding="utf-8").read()
+    manifest = {
+        "fw_version": cfg_str(cfg, "FW_VERSION"),
+        "build_id": env["FW_BUILD_ID"],
+        "uf2_file": "wio-factory-test.uf2",
+        "uf2_sha256": hashlib.sha256(open(uf2, "rb").read()).hexdigest(),
+        "payload_sha256": hashlib.sha256(payload).hexdigest(),
+        "payload_base": BASE,
+        "block_count": n,
+        "family_id": FAMILY,
+        "wifi_ssid_2g": cfg_str(cfg, "WIFI_SSID_2G"),
+        "wifi_ssid_5g": cfg_str(cfg, "WIFI_SSID_5G"),
+    }
+    with open(os.path.join(dist, "manifest.json"), "w") as f:
+        json.dump(manifest, f, indent=2, sort_keys=True)
+        f.write("\n")
+    print("dist updated: build_id=%s blocks=%d" % (manifest["build_id"], n))
 
 env.AddPostAction("$BUILD_DIR/${PROGNAME}.bin", after_bin)

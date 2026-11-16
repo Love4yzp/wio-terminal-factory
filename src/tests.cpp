@@ -19,6 +19,7 @@ static const KeyDef KEYS[8] = {
 static inline bool pressed(uint8_t i) { return digitalRead(KEYS[i].pin) == LOW; }
 
 void ledTick() {
+  if (Serial.available() && tolower(Serial.peek()) == 'v') { Serial.read(); printVersion(); }  // 任何等待中都能查版本
   static uint32_t t = 0;
   if (millis() - t >= 150) { t = millis(); digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); }
 }
@@ -26,7 +27,8 @@ void ledTick() {
 char serialCmd() {
   while (Serial.available()) {
     char c = tolower(Serial.read());
-    if (c == 'p' || c == 'f' || c == 's') return c;
+    if (c == 'v') printVersion();
+    else if (c == 'p' || c == 'f' || c == 's') return c;
   }
   return 0;
 }

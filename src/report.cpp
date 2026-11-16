@@ -33,6 +33,8 @@ static void jsonStr(const char *s) {
   Serial.print('"');
 }
 
+void printVersion() { Serial.printf("FW_VER:%s|%s\r\n", FW_VERSION, FW_BUILD_ID); }
+
 void reportPrintFinal(uint32_t totalMs) {
   bool ok = reportAllPass();
   Serial.println(F("\r\n+------------+------+--------+------------------------------------------------+"));
@@ -46,6 +48,7 @@ void reportPrintFinal(uint32_t totalMs) {
                 ok ? "PASS" : "REPAIR", g_mac, g_rtlVer, (unsigned long)totalMs, FW_VERSION);
   if (g_wifiFallback) Serial.println(F("NOTE: WIFI SSID not configured -> fallback band check"));
   Serial.print(F("JSON:{\"fw\":")); jsonStr(FW_VERSION);
+  Serial.print(F(",\"build_id\":")); jsonStr(FW_BUILD_ID);
   Serial.printf(",\"result\":\"%s\",\"total_ms\":%lu,\"mac\":", ok ? "PASS" : "REPAIR", (unsigned long)totalMs);
   jsonStr(g_mac); Serial.print(F(",\"rtl_fw\":")); jsonStr(g_rtlVer);
   Serial.printf(",\"wifi_fallback\":%s,\"items\":[", g_wifiFallback ? "true" : "false");

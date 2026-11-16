@@ -13,4 +13,5 @@ extern bool g_wifiFallback;
 
 void reportSet(TestId id, bool pass, const char *fmt, ...);
 bool reportAllPass();
+void printVersion();   // 单行: FW_VER:<FW_VERSION>|<FW_BUILD_ID>
 void reportPrintFinal(uint32_t totalMs);

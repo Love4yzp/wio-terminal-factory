@@ -23,8 +23,9 @@ void setup() {
   uint32_t t = millis();
   while (!Serial && millis() - t < 1500) ledTick();   // 无串口也继续
   uint32_t t0 = millis();
-  Serial.printf("\r\n==== Wio Terminal Factory Test %s ====\r\n", FW_VERSION);
-  Serial.println(F("Manual steps fallback via serial: p=pass f=fail s=skip(fail)"));
+  Serial.printf("\r\n==== Wio Terminal Factory Test %s (%s) ====\r\n", FW_VERSION, FW_BUILD_ID);
+  printVersion();
+  Serial.println(F("Manual steps fallback via serial: p=pass f=fail s=skip(fail) v=version; after summary: r=report t=retest"));
 
   run(T_STUCK, nullptr, nullptr, testStuckKeys);    // 最先：未操作前采样
   uiInit();
@@ -52,5 +53,10 @@ void loop() {
   static uint32_t t = 0;
   if (millis() - t >= (s_pass ? 500u : 100u)) { t = millis(); digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); }
   // 串口输入 'r' 重新打印报告
-  if (Serial.available() && tolower(Serial.read()) == 'r') reportPrintFinal(s_total);
+  if (Serial.available()) {
+    char c = tolower(Serial.read());
+    if (c == 'r') reportPrintFinal(s_total);
+    else if (c == 'v') printVersion();
+    else if (c == 't') { Serial.println(F("RETEST: rebooting")); Serial.flush(); delay(50); NVIC_SystemReset(); }
+  }
 }

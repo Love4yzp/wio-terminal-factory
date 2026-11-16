@@ -6,6 +6,13 @@
 
 ---
 
+## 快速使用
+
+* **测试工位（无需 pio）**：`python3 tools/auto_flash.py`。插上设备后，脚本会自动识别设备、比对版本、按需烧录 `dist/` 中的预编译固件，并把串口结果显示在终端、存到 `logs/`。
+* **开发者编译（需要 PlatformIO）**：`pio run`（会同步更新 `dist/`）。详见 [开发说明](docs/development.md)。
+
+---
+
 ## 文档索引
 
 * [设计决策记录 (ADR)](docs/decisions.md) — 持续保留项目中已确定的范围、取舍与待定项决策

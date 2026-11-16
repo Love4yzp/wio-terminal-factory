@@ -43,4 +43,7 @@
 #define ENABLE_GPIO_LOOPBACK 0
 #define ENABLE_IR_TEST      0
 
+#ifndef FW_BUILD_ID
+#define FW_BUILD_ID "dev"   // 正常由 scripts/build_id.py 注入
+#endif
 #define FW_VERSION          "wio-factory-p1-0.1.0"
