@@ -3,12 +3,15 @@
 
 TFT_eSPI tft;
 
-void backlight(uint8_t level) { analogWrite(LCD_BACKLIGHT, level); }
+// PC05 在 SAMD51 variant 中是 NOT_ON_PWM，且 analogWrite 默认 12bit 分辨率：
+// analogWrite(…,255) 会退化成 digitalWrite(LOW) 把背光关掉。所以只用数字开关。
+void backlight(uint8_t level) { digitalWrite(LCD_BACKLIGHT, level ? HIGH : LOW); }
 
 void uiInit() {
   tft.begin();
   tft.setRotation(3);
   tft.fillScreen(TFT_BLACK);
+  pinMode(LCD_BACKLIGHT, OUTPUT);
   backlight(255);
 }
 

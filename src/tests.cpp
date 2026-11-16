@@ -221,8 +221,15 @@ void testLcd() {
   const uint16_t colors[] = {TFT_RED, TFT_GREEN, TFT_BLUE, TFT_WHITE, TFT_BLACK};
   for (uint16_t c : colors) { tft.fillScreen(c); uint32_t t = millis(); while (millis() - t < LCD_COLOR_MS) ledTick(); }
   tft.fillScreen(TFT_WHITE);
-  for (int l = 0; l <= 255; l += 5) { backlight(l); delay(8); }
-  for (int l = 255; l >= 0; l -= 5) { backlight(l); delay(8); }
+  // 软件 PWM 渐变：1kHz 载波，占空比 0→100→0%，约 1.6s
+  for (int step = 0; step <= 80; step++) {
+    int duty = step <= 40 ? step * 25 : (80 - step) * 25;   // 0..1000 us / 1000 us 周期
+    for (int cyc = 0; cyc < 20; cyc++) {
+      if (duty > 0) { backlight(1); delayMicroseconds(duty); }
+      if (duty < 1000) { backlight(0); delayMicroseconds(1000 - duty); }
+    }
+    ledTick();
+  }
   backlight(255);
   waitRelease(1000);
   bool relA = digitalRead(WIO_KEY_A) == HIGH, relC = digitalRead(WIO_KEY_C) == HIGH;
