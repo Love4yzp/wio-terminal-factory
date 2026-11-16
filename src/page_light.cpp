@@ -4,7 +4,6 @@
 #include "test_config.h"
 
 const char *PageLight::title() const { return "Light & IO"; }
-const char *PageLight::hint() const { return "A/B/C C4/E4/G4  Press reset  L/R tab"; }
 
 static const int BAR_X = 10, BAR_Y = 54, BAR_W = 44, BAR_H = 124;
 static const int BOX_W = 64, BOX_H = 22;
@@ -17,9 +16,26 @@ static const int BOX[K_COUNT][2] = {
 };
 static const char *LABEL[K_COUNT] = {"KEY_A", "KEY_B", "KEY_C", "U", "D", "L", "R", "PRESS"};
 
+static const int BADGE_X = 196, BADGE_Y = 30, BADGE_W = 114, BADGE_H = 14;
+
 static uint8_t s_seen = 0;
 static uint8_t s_lastDown = 0;
 static int s_lastRaw = -1;
+static bool s_locked = false;
+static bool s_victoryPlayed = false;
+
+const char *PageLight::hint() const {
+  return s_locked ? "KEY LOCKED: test L/R/all 8   PRESS unlock"
+                  : "PRESS key-lock   A/B/C tones   L/R tab";
+}
+
+bool PageLight::capturesNav() const { return s_locked; }
+
+static int seenCount() {
+  int n = 0;
+  for (int i = 0; i < K_COUNT; i++) if (s_seen & (1 << i)) n++;
+  return n;
+}
 
 static void drawBox(int i, bool down) {
   bool seen = s_seen & (1 << i);
@@ -38,15 +54,50 @@ static void drawAllBoxes() {
 }
 
 static void drawSeenCount() {
-  int n = 0;
-  for (int i = 0; i < K_COUNT; i++) if (s_seen & (1 << i)) n++;
+  int n = seenCount();
   char buf[16];
-  snprintf(buf, sizeof(buf), "%d/8", n);
-  tft.fillRect(112, 164, 60, 12, C::bg);
+  if (n == K_COUNT) snprintf(buf, sizeof(buf), "%d/%d PASS", n, K_COUNT);
+  else snprintf(buf, sizeof(buf), "%d/%d", n, K_COUNT);
+
+  tft.fillRect(112, 164, 76, 12, C::bg);
   tft.setTextDatum(ML_DATUM);
-  tft.setTextColor(n == 8 ? C::ok : C::text, C::bg);
   tft.setTextSize(1);
+  tft.setTextColor(n == K_COUNT ? C::ok : C::dim, C::bg);
+  tft.drawString("SEEN", 78, 170);
+  tft.setTextColor(n == K_COUNT ? C::ok : C::text, C::bg);
   tft.drawString(buf, 112, 170);
+}
+
+static void checkVictory() {
+  const uint8_t allSeen = (uint8_t)((1u << K_COUNT) - 1u);
+  if (s_seen == allSeen && !s_victoryPlayed) {
+    s_victoryPlayed = true;
+    playTone(523, 60);
+    playTone(659, 60);
+    playTone(784, 90);
+    drawSeenCount();
+  }
+}
+
+static void markSeen(int i) {
+  s_seen |= 1 << i;
+  drawBox(i, isKeyDown(KEY_DEFS[i].pin));
+  drawSeenCount();
+  checkVictory();
+}
+
+static void drawLockBadge() {
+  tft.fillRect(78, 30, 116, 12, C::bg);
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextSize(1);
+  tft.setTextColor(s_locked ? C::accent2 : C::dim, C::bg);
+  tft.drawString(s_locked ? "L/R captured" : "PRESS: lock L/R", 78, 36);
+
+  tft.fillRoundRect(BADGE_X, BADGE_Y, BADGE_W, BADGE_H, 4, C::panel);
+  tft.drawRoundRect(BADGE_X, BADGE_Y, BADGE_W, BADGE_H, 4, s_locked ? C::accent2 : C::dim);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(s_locked ? C::accent2 : C::dim, C::panel);
+  tft.drawString(s_locked ? "[KEY LOCK]" : "[UNLOCKED]", BADGE_X + BADGE_W / 2, BADGE_Y + BADGE_H / 2);
 }
 
 static void drawLight(bool force) {
@@ -93,22 +144,28 @@ static void drawFrame() {
   tft.setTextColor(C::text, C::bg);
   tft.drawString("A/B/C = C4/E4/G4", 78, 186);
   tft.setTextColor(C::dim, C::bg);
-  tft.drawString("NavPress resets seen", 78, 202);
+  tft.drawString("PRESS toggles lock; re-enter clears", 78, 202);
 }
 
 void PageLight::enter() {
   s_seen = 0;
   s_lastDown = 0;
   s_lastRaw = -1;
+  s_locked = false;
+  s_victoryPlayed = false;
   drawFrame();
+  drawLockBadge();
   drawLight(true);
   drawSeenCount();
 }
 
+void PageLight::leave() {
+  s_locked = false;
+}
+
 void PageLight::onNavigate(InputEvent e) {
-  if (e == InputEvent::NavLeft) { s_seen |= 1 << K_LEFT; drawBox(K_LEFT, false); }
-  if (e == InputEvent::NavRight) { s_seen |= 1 << K_RIGHT; drawBox(K_RIGHT, false); }
-  if (e == InputEvent::NavLeft || e == InputEvent::NavRight) drawSeenCount();
+  if (e == InputEvent::NavLeft) markSeen(K_LEFT);
+  if (e == InputEvent::NavRight) markSeen(K_RIGHT);
 }
 
 void PageLight::update() {
@@ -128,7 +185,11 @@ void PageLight::update() {
   }
   if (downMask != s_lastDown) changed = true;
   s_lastDown = downMask;
-  if (changed) { drawAllBoxes(); drawSeenCount(); }
+  if (changed) {
+    drawAllBoxes();
+    drawSeenCount();
+    checkVictory();
+  }
   drawLight(false);
 }
 
@@ -136,45 +197,40 @@ void PageLight::onInput(InputEvent e) {
   if (e == InputEvent::KeyA) {
     s_seen |= 1 << K_A;
     drawBox(K_A, true);
+    drawSeenCount();
     playTone(262, 120);
     drawBox(K_A, isKeyDown(KEY_DEFS[K_A].pin));
-    drawSeenCount();
+    checkVictory();
   } else if (e == InputEvent::KeyB) {
     s_seen |= 1 << K_B;
     drawBox(K_B, true);
+    drawSeenCount();
     playTone(330, 120);
     drawBox(K_B, isKeyDown(KEY_DEFS[K_B].pin));
-    drawSeenCount();
+    checkVictory();
   } else if (e == InputEvent::KeyC) {
     s_seen |= 1 << K_C;
     drawBox(K_C, true);
+    drawSeenCount();
     playTone(392, 120);
     drawBox(K_C, isKeyDown(KEY_DEFS[K_C].pin));
-    drawSeenCount();
+    checkVictory();
   } else if (e == InputEvent::NavUp) {
-    s_seen |= 1 << K_UP;
-    drawBox(K_UP, true);
-    drawSeenCount();
+    markSeen(K_UP);
   } else if (e == InputEvent::NavDown) {
-    s_seen |= 1 << K_DOWN;
-    drawBox(K_DOWN, true);
-    drawSeenCount();
+    markSeen(K_DOWN);
+  } else if (e == InputEvent::NavLeft) {
+    markSeen(K_LEFT);
+  } else if (e == InputEvent::NavRight) {
+    markSeen(K_RIGHT);
   } else if (e == InputEvent::NavPress) {
-    s_seen = 0;
-    s_lastDown = 0;
-    drawAllBoxes();
     s_seen |= 1 << K_PRESS;
-    drawBox(K_PRESS, true);
+    s_locked = !s_locked;
     playTone(880, 30);
+    drawLockBadge();
+    drawFooter(hint());
     drawBox(K_PRESS, isKeyDown(KEY_DEFS[K_PRESS].pin));
     drawSeenCount();
-  } else if (e == InputEvent::NavLeft) {
-    s_seen |= 1 << K_LEFT;
-    drawBox(K_LEFT, true);
-    drawSeenCount();
-  } else if (e == InputEvent::NavRight) {
-    s_seen |= 1 << K_RIGHT;
-    drawBox(K_RIGHT, true);
-    drawSeenCount();
+    checkVictory();
   }
 }

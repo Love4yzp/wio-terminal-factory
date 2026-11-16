@@ -11,6 +11,7 @@ class Page {
   virtual void onInput(InputEvent) {}
   virtual void onNavigate(InputEvent) {}
   virtual void leave() {}
+  virtual bool capturesNav() const { return false; }
 
   bool takeFullRedraw() {
     bool r = _redraw;
@@ -67,6 +68,8 @@ class PageLight : public Page {
   void update() override;
   void onInput(InputEvent e) override;
   void onNavigate(InputEvent e) override;
+  void leave() override;
+  bool capturesNav() const override;
 };
 
 class PageSystem : public Page {

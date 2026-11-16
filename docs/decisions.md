@@ -67,4 +67,5 @@
     * Tab 4 (`Audio`)：`WIO_MIC` 实时波形 + VU 峰值柱（`A` 冻结，`B` 发 4kHz 测试音）；
     * Tab 5 (`Light & IO`)：`WIO_LIGHT` 实时光照柱 + `A/B/C` 音阶发声 + 8 键实时点亮指示；
     * Tab 6 (`LCD & Sys`)：内置 R/G/B/白/黑与灰阶目视条 + 系统版本/Build ID/内存/运行时间（按 `A` 触发全屏纯色轮播）。
+  * **Tab 5 Key-Test Lock（D-009 补充）**：`NavPress` / `PRESS` 切换 Key-Lock。未锁定时 `LEFT / RIGHT` 照常切 Tab；锁定后 `LEFT / RIGHT` 留在 `Light & IO` 并点亮/锁存 L/R，便于完成 8/8 键检。再次 `PRESS` 解锁。锁定/解锁不重置已 seen 集合，只有离开或重新进入 Tab 5 才清零（进入方向会先计入 seen）；首次达到 8/8 时播放短提示音并把 `SEEN 8/8 PASS` 标绿。
   * **脚本侧默认只刷机、不采集**：`tools/auto_flash.py` 默认只负责识别设备、比对 `build_id` 并快速 UF2 烧录（刷完盘符卸载即完成），不再默认等待串口跑完或保存 `logs/*.json` / `.log`；串口仍保留文本/JSON 报告输出与可选 `--monitor` 调试模式。

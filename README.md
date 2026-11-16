@@ -47,8 +47,10 @@ pio device monitor # 115200 串口
 | 2 | **Wi-Fi / Net** | RTL8720 固件、MAC、2.4G/5G 最佳 RSSI + 信号条、SSID、IP、网关、状态 | `A` 重扫 + DHCP |
 | 3 | **IMU** | LIS3DHTR 气泡水平仪、X/Y/Z ±2g 条、`\|a\|` 读数 | `A` / `NavPress` 重置平滑并重初始化 |
 | 4 | **Audio** | WIO_MIC 实时滚动波形（校准 micBias）+ VU 峰值保持 | `A` 冻结/恢复；`B` 4kHz 短鸣 |
-| 5 | **Light & IO** | 实时光照渐变条 + ADC 读数；A/B/C 播放 C4/E4/G4；8 键实时点亮与 seen 锁存 | `NavPress` 清除 seen |
+| 5 | **Light & IO** | 实时光照渐变条 + ADC 读数；A/B/C 播放 C4/E4/G4；8 键实时点亮与 seen 锁存；`PRESS` 进入 Key-Lock 后 L/R 不再切页，可完整测试 8 键 | `PRESS` 切换 Key-Lock；离开/重进清 seen |
 | 6 | **LCD & Sys** | R/G/B/W/K 色块 + 灰阶条；FW 版本、Build ID、QSPI 4MB、Free RAM、Uptime | `A` 全屏纯色轮播 + 1kHz 软件 PWM 背光渐变 |
+
+Tab 5 默认是正常浏览模式：`LEFT` / `RIGHT` 立即切页。按 `PRESS` 进入 **Key-Lock** 后，`L/R` 留在本页并计入 8 键检查，底部提示变为 `KEY LOCKED: test L/R/all 8   PRESS unlock`；再按 `PRESS` 解锁。锁定/解锁保留已 seen 的键，离开或重新进入本页才清零（进入方向会先计入 seen）；首次达到 `8/8 PASS` 会播放短提示音并标绿。
 
 状态说明：`PASS` 时蓝色 LED 1 Hz 慢闪，`REPAIR` 时 5 Hz 快闪。串口命令：`v` 版本、`r` 重打报告、`t` 重启。
 

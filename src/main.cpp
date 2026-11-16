@@ -77,8 +77,9 @@ void loop() {
   handleSerial();
 
   InputEvent e = pollInput();
-  if (e == InputEvent::NavLeft) { switchTo(s_page - 1, e); return; }
-  if (e == InputEvent::NavRight) { switchTo(s_page + 1, e); return; }
+  bool navCaptured = s_pages[s_page]->capturesNav();
+  if (!navCaptured && e == InputEvent::NavLeft) { switchTo(s_page - 1, e); return; }
+  if (!navCaptured && e == InputEvent::NavRight) { switchTo(s_page + 1, e); return; }
   if (e != InputEvent::None) s_pages[s_page]->onInput(e);
 
   if (s_pages[s_page]->takeFullRedraw()) { switchTo(s_page, InputEvent::None); return; }

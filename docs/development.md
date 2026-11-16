@@ -42,10 +42,10 @@ Linux 需要当前用户有串口权限（`uucp` / `dialout` 组），并且 UF2
 | 2 | Wi-Fi / Net | RTL8720 版本、MAC、2.4G/5G RSSI 条、SSID、IP、网关、状态；`A` 重跑 RTL + 扫描 + DHCP，并重打报告 |
 | 3 | IMU | 气泡水平仪 + X/Y/Z ±2g 条 + `\|a\|`；`A` / `NavPress` 重置平滑并强制重初始化 |
 | 4 | Audio | WIO_MIC 实时滚动波形 + VU/peak hold；`A` 冻结/恢复，`B` 4kHz 短鸣（不阻塞采样，可看到麦克风尖峰） |
-| 5 | Light & IO | 实时光照渐变条 + ADC；`A/B/C` 播放 C4/E4/G4；8 键实时变绿并锁存 seen；`NavPress` 清零，重新进入本页也会清零 |
+| 5 | Light & IO | 实时光照渐变条 + ADC；`A/B/C` 播放 C4/E4/G4；8 键实时变绿并锁存 seen；`PRESS` 切换 Key-Lock（锁定后 L/R 留在本页并计入 8 键），离开/重进清零 |
 | 6 | LCD & Sys | R/G/B/W/K 色块 + 16 级灰阶条；FW、Build ID、QSPI 4MB、Free RAM、Uptime；`A` 全屏纯色轮播 + 1kHz 软件 PWM 背光渐变后重绘 |
 
-`LEFT` / `RIGHT` 在 Tab 5 仍然优先切页，不会卡在按键测试里；进入 Tab 5 的那个方向会记为已 seen，便于验证摇杆左右。
+Tab 5 默认是普通浏览模式，`LEFT` / `RIGHT` 立即切页；进入 Tab 5 的那个方向会记为已 seen。按 `PRESS` 进入 **Key-Lock** 后 `capturesNav()` 返回 true，`LEFT` / `RIGHT` 不再切页，而是点亮/锁存 `L` / `R`，可完成 8/8 键检；底部提示切换为 `KEY LOCKED: test L/R/all 8   PRESS unlock`，右侧 badge 变为橙色 `[KEY LOCK]`。再按 `PRESS` 解锁，锁定/解锁都不清空已 seen；只有离开或重新进入 Tab 5 才清零。首次达到 8/8 时播放 523/659/784 Hz 短提示音，并把 `SEEN 8/8 PASS` 标绿。
 
 ### 后台行为
 

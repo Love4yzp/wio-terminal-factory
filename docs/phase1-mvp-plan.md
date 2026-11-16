@@ -60,7 +60,7 @@
    * **Tab 2 Wi-Fi / Net**：RTL/MAC、2.4G/5G RSSI 条、SSID、IP、网关；按 `A` 重扫 + DHCP。
    * **Tab 3 IMU**：气泡水平仪 + X/Y/Z ±2g + `|a|`。
    * **Tab 4 Audio**：实时麦克风波形 + VU 峰值保持；`A` 冻结，`B` 4kHz 短鸣。
-   * **Tab 5 Light & IO**：光照渐变条 + ADC；`A/B/C` 播放 C4/E4/G4；8 键实时变绿并锁存 seen。
+   * **Tab 5 Light & IO**：光照渐变条 + ADC；`A/B/C` 播放 C4/E4/G4；8 键实时变绿并锁存 seen；`PRESS` 切换 Key-Lock，锁定后 `L/R` 留在本页并可测试全部 8 键。
    * **Tab 6 LCD & Sys**：R/G/B/W/K 色块 + 灰阶条 + 版本/内存/运行时间；`A` 全屏纯色轮播 + 背光渐变。
 4. **Step 4：结论与兜底**
    * **屏幕可用时**：Tab 1 顶部直接显示 **绿色 `PASS`** 或 **红色 `REPAIR`**，下方逐行显示 6 项状态与具体原因。
