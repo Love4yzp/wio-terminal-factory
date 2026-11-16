@@ -336,8 +336,12 @@ void testWifi(bool rtlOk) {
 }
 
 void testWireless() {
+  uint32_t ts = millis();
   bool rtlOk = testRtl();
+  g_results[T_RTL].ms = millis() - ts;
+  ts = millis();
   testWifi(rtlOk);
+  g_results[T_WIFI].ms = millis() - ts;
 }
 
 // ---------------- 自动检查总流程 ----------------
@@ -345,23 +349,24 @@ void runAllAutoTests(bool showProgress) {
   if (showProgress) uiBootProgress(0, AUTO_CHECK_ITEMS, "STUCK_KEY", "sampling 8 keys before boot");
   // 重测时 A 键可能仍被按住，先等操作员松手，避免误判粘连
   keysReleased(KEYS_RELEASE_WAIT_MS);
-  uint32_t t0 = millis();
-  testStuckKeys();
+  uint32_t t0 = millis(), ts;
+
+  ts = millis(); testStuckKeys(); g_results[T_STUCK].ms = millis() - ts;
 
   if (showProgress) uiBootProgress(1, AUTO_CHECK_ITEMS, "QSPI_FLASH", "erase / write / verify 4KB sector");
-  testQspi();
+  ts = millis(); testQspi(); g_results[T_QSPI].ms = millis() - ts;
 
   if (showProgress) uiBootProgress(2, AUTO_CHECK_ITEMS, "ACCEL", "LIS3DHTR @ Wire1  +/-2g static check");
-  testAccel();
+  ts = millis(); testAccel(); g_results[T_ACC].ms = millis() - ts;
 
   if (showProgress) uiBootProgress(3, AUTO_CHECK_ITEMS, "BUZZER_MIC", "4kHz tone -> WIO_MIC closed loop");
-  testAudio();
+  ts = millis(); testAudio(); g_results[T_AUDIO].ms = millis() - ts;
 
   if (showProgress) uiBootProgress(4, AUTO_CHECK_ITEMS, "RTL8720", "eRPC handshake + MAC address");
-  bool rtlOk = testRtl();
+  ts = millis(); bool rtlOk = testRtl(); g_results[T_RTL].ms = millis() - ts;
 
   if (showProgress) uiBootProgress(5, AUTO_CHECK_ITEMS, "WIFI_2G5G", "dual-band scan + DHCP connect");
-  testWifi(rtlOk);
+  ts = millis(); testWifi(rtlOk); g_results[T_WIFI].ms = millis() - ts;
 
   g_totalMs = millis() - t0;
   printVersion();
