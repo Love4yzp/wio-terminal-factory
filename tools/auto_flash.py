@@ -194,9 +194,14 @@ class Serial:
         if not r:
             return b""
         try:
-            return os.read(self.fd, 4096)
+            d = os.read(self.fd, 4096)
+        except BlockingIOError:
+            return b""
         except OSError:
             raise EOFError("serial gone")
+        if not d:
+            raise EOFError("serial gone")
+        return d
 
     def write(self, b):
         os.write(self.fd, b)
@@ -308,7 +313,12 @@ def handle_serial(port, man, args):
     except OSError as e:
         log(c("打开串口失败：%s" % e, "31"))
         return False
-    ver, buf = query_version(s)
+    try:
+        ver, buf = query_version(s)
+    except EOFError:
+        log(c("查询版本时串口断开", "33"))
+        s.close()
+        return False
     if ver and ver[1] == man["build_id"]:
         log(c("固件已是最新（%s|%s），跳过烧录" % ver, "32"))
         if args.retest and "==== Wio" not in buf:   # 不是刚上电（多半停在汇总页）
@@ -347,6 +357,9 @@ def handle_serial_after_flash(port, man, args):
         if not ver or ver[1] != man["build_id"]:
             log(c("烧录后版本仍不匹配：%s" % (ver,), "31"))
         return monitor(s, buf, args.test_timeout)
+    except EOFError:
+        log(c("串口断开（设备被拔出或重启）", "33"))
+        return False
     finally:
         s.close()
 
