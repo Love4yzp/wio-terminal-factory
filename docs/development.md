@@ -42,7 +42,8 @@ pio device monitor # 115200 串口日志
 | `src/report.cpp` | 结果记录、串口表格 + 单行 `JSON:` 汇总 |
 
 ## 测试配置
-- **Wi-Fi**：在 `include/test_config.h` 修改 `WIFI_SSID_2G` / `WIFI_SSID_5G` / `WIFI_RSSI_MIN_DBM`。两个 SSID 都留空时降级为“任意 2.4G 与 5G AP（channel>14 视为 5G）都 ≥ 门限”，报告中带 `[fallback]` 和 `wifi_fallback:true`。只配一个 SSID 时只校验该频段。
+- **Wi-Fi**：在 `include/test_config.h` 修改 `WIFI_SSID_2G` / `WIFI_SSID_5G` / `WIFI_RSSI_MIN_DBM`。两个 SSID 都留空时降级为“任意 2.4G 与 5G AP（channel>14 视为 5G）都 ≥ 门限”，报告中带 `[fallback]` 和 `wifi_fallback:true`。只配一个 SSID 时只校验该频段。默认值为 `SEEED-Guest`（2.4G/5G 同名）。
+- **Wi-Fi 实连**：`WIFI_CONNECT_ENABLE`（默认 1）、`WIFI_CONNECT_SSID` / `WIFI_CONNECT_PASS`（默认 `SEEED-Guest` / `SeeedGuest22`）、`WIFI_CONNECT_TIMEOUT_MS`（12000）。扫描完成后执行 `WiFi.begin()`，在超时内等待 `WL_CONNECTED` 并拿到非 0 IP，然后 `WiFi.disconnect(true)`。`WIFI_2G5G` 只有在扫描达标**并且**拿到 IP 时才判 PASS。屏幕显示紧凑格式，例如 `2G:-52 5G:-58 IP:10.1.2.3` / `... conn timeout` / `... no IP` / `... RSSI<min`。完整的 status、IP、网关、RSSI 见串口。`WIFI_CONNECT_SSID` 留空或 `ENABLE=0` 时只做扫描。密码只放在源码里，不写入 `dist/manifest.json`。
 - **QSPI**：测试 4MB 外部 Flash 最后一个 4KB 扇区，测前备份、测后写回（`QSPI_RESTORE_SECTOR`）。程序在 SAMD51 内部 Flash，不受影响。
 - **声学**：`AUDIO_MIN_P2P` / `AUDIO_RATIO_MIN` 需要用好机实测后再定标。
 - **光敏**：`LIGHT_DROP_RATIO`，环境太暗（基线 < `LIGHT_MIN_BASELINE`）直接 FAIL。

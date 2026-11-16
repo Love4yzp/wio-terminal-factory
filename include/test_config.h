@@ -3,10 +3,15 @@
 
 // ---------- Wi-Fi（修改目标 AP 在这里） ----------
 // 留空 "" 则降级：只要扫描到任意 2.4G 与 5G 信号 >= 门限的 AP 即判 PASS（报告会注明 fallback）
-#define WIFI_SSID_2G        ""
-#define WIFI_SSID_5G        ""
+#define WIFI_SSID_2G        "SEEED-Guest"
+#define WIFI_SSID_5G        "SEEED-Guest"
 #define WIFI_RSSI_MIN_DBM   (-70)
 #define WIFI_SCAN_RETRIES   2
+// 扫描后实际连网（拿到有效 IP 才算 PASS）；密码不会写入 dist/manifest.json
+#define WIFI_CONNECT_ENABLE     1
+#define WIFI_CONNECT_SSID       "SEEED-Guest"
+#define WIFI_CONNECT_PASS       "SeeedGuest22"
+#define WIFI_CONNECT_TIMEOUT_MS 12000
 
 // ---------- QSPI Flash ----------
 // 外部 4MB QSPI 不存放程序（程序在 SAMD51 内部 Flash），测最后一个 4KB 扇区，测试前备份、测试后恢复

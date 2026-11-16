@@ -1,12 +1,14 @@
 {
-  "block_count": 387,
-  "build_id": "2273449b",
+  "block_count": 395,
+  "build_id": "27ec6be4",
   "family_id": 1427194976,
   "fw_version": "wio-factory-p1-0.1.0",
   "payload_base": 16384,
-  "payload_sha256": "b3442179fe9c98206718ad112d14d55a9df15a123f21a90d744ff025ad3bcd72",
+  "payload_sha256": "7710e5f2e9b8cc0337dd70e3ac65246f16aa7e5a86a1e6dd3a61d694f1dcf34c",
   "uf2_file": "wio-factory-test.uf2",
-  "uf2_sha256": "434d5a9ebc7e5256b4cd1f77157860afc909ba5fa11c4f73ec2f1fb1d9578908",
-  "wifi_ssid_2g": "",
-  "wifi_ssid_5g": ""
+  "uf2_sha256": "d4f2c83f25271019139d20641135d7e0441bf133e684d67376eed37ffb1ddec9",
+  "wifi_connect_enable": true,
+  "wifi_connect_ssid": "SEEED-Guest",
+  "wifi_ssid_2g": "SEEED-Guest",
+  "wifi_ssid_5g": "SEEED-Guest"
 }

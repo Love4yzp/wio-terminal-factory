@@ -43,6 +43,8 @@ def after_bin(source, target, env):
         "family_id": FAMILY,
         "wifi_ssid_2g": cfg_str(cfg, "WIFI_SSID_2G"),
         "wifi_ssid_5g": cfg_str(cfg, "WIFI_SSID_5G"),
+        "wifi_connect_ssid": cfg_str(cfg, "WIFI_CONNECT_SSID"),
+        "wifi_connect_enable": bool(re.search(r"#define\s+WIFI_CONNECT_ENABLE\s+1\b", cfg)),
     }
     with open(os.path.join(dist, "manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2, sort_keys=True)

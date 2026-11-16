@@ -179,8 +179,36 @@ void testRtlAndWifi() {
   }
   bool need2 = !targeted || strlen(WIFI_SSID_2G), need5 = !targeted || strlen(WIFI_SSID_5G);
   bool ok2 = !need2 || best2 >= WIFI_RSSI_MIN_DBM, ok5 = !need5 || best5 >= WIFI_RSSI_MIN_DBM;
-  reportSet(T_WIFI, ok2 && ok5, "%s2G %d 5G %d (min %d)%s", targeted ? "" : "[fallback] ",
-            best2, best5, WIFI_RSSI_MIN_DBM, n <= 0 ? " no AP found" : "");
+  Serial.printf("       scan result: 2G %d 5G %d (min %d)%s%s\r\n", best2, best5, WIFI_RSSI_MIN_DBM,
+                targeted ? "" : " [fallback]", n <= 0 ? " no AP found" : "");
+  char scan[32];
+  snprintf(scan, sizeof scan, "%s2G:%d 5G:%d", targeted ? "" : "fb ", best2, best5);
+  bool scanOk = ok2 && ok5;
+
+#if WIFI_CONNECT_ENABLE
+  if (strlen(WIFI_CONNECT_SSID)) {
+    Serial.printf("       connecting to %s ...\r\n", WIFI_CONNECT_SSID);
+    WiFi.begin(WIFI_CONNECT_SSID, WIFI_CONNECT_PASS);
+    uint32_t t = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - t < WIFI_CONNECT_TIMEOUT_MS) { ledTick(); delay(50); }
+    int st = WiFi.status();
+    bool conn = st == WL_CONNECTED;
+    IPAddress ip = conn ? WiFi.localIP() : IPAddress(0, 0, 0, 0);
+    bool ipOk = conn && ip != IPAddress(0, 0, 0, 0);
+    // 等 DHCP：已关联但还没拿到 IP 时在剩余时间内继续等
+    while (conn && !ipOk && millis() - t < WIFI_CONNECT_TIMEOUT_MS) {
+      ledTick(); delay(100); ip = WiFi.localIP(); ipOk = ip != IPAddress(0, 0, 0, 0);
+    }
+    Serial.printf("       wifi status %d ip %s gw %s rssi %d (%lu ms)\r\n", st, ip.toString().c_str(),
+                  WiFi.gatewayIP().toString().c_str(), conn ? (int)WiFi.RSSI() : 0, (unsigned long)(millis() - t));
+    WiFi.disconnect(true);
+    if (!conn) reportSet(T_WIFI, false, "%s conn %s", scan, millis() - t >= WIFI_CONNECT_TIMEOUT_MS ? "timeout" : "fail");
+    else if (!ipOk) reportSet(T_WIFI, false, "%s no IP", scan);
+    else reportSet(T_WIFI, scanOk, "%s IP:%s%s", scan, ip.toString().c_str(), scanOk ? "" : " RSSI<min");
+    return;
+  }
+#endif
+  reportSet(T_WIFI, scanOk, "%s (min %d)%s", scan, WIFI_RSSI_MIN_DBM, n <= 0 ? " no AP" : "");
 }
 
 // ---------------- 7. LCD + 背光 ----------------
