@@ -183,7 +183,6 @@ void testRtlAndWifi() {
 
 // ---------------- 7. LCD + 背光 ----------------
 void testLcd() {
-  uint32_t t0 = millis();
   const uint16_t colors[] = {TFT_RED, TFT_GREEN, TFT_BLUE, TFT_WHITE, TFT_BLACK};
   for (uint16_t c : colors) { tft.fillScreen(c); uint32_t t = millis(); while (millis() - t < LCD_COLOR_MS) ledTick(); }
   tft.fillScreen(TFT_WHITE);
@@ -191,15 +190,19 @@ void testLcd() {
   for (int l = 255; l >= 0; l -= 5) { backlight(l); delay(8); }
   backlight(255);
   waitRelease(1000);
+  bool relA = digitalRead(WIO_KEY_A) == HIGH, relC = digitalRead(WIO_KEY_C) == HIGH;
   uiProgress("LCD / Backlight", "A = display OK    C = display BAD   (serial: p / f)");
   tft.setTextSize(2);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.drawString("Colors & dimming OK?", 10, 140);
-  while (millis() - t0 < LCD_CONFIRM_TIMEOUT_MS + 5 * LCD_COLOR_MS + 1000) {
+  uint32_t t0 = millis();
+  while (millis() - t0 < LCD_CONFIRM_TIMEOUT_MS) {
     ledTick();
+    if (digitalRead(WIO_KEY_A) == HIGH) relA = true;
+    if (digitalRead(WIO_KEY_C) == HIGH) relC = true;
     char c = serialCmd();
-    if (digitalRead(WIO_KEY_A) == LOW || c == 'p') { reportSet(T_LCD, true, "operator confirmed"); waitRelease(1000); return; }
-    if (digitalRead(WIO_KEY_C) == LOW || c == 'f' || c == 's') { reportSet(T_LCD, false, "operator marked BAD"); waitRelease(1000); return; }
+    if ((relA && digitalRead(WIO_KEY_A) == LOW) || c == 'p') { reportSet(T_LCD, true, "operator confirmed"); waitRelease(1000); return; }
+    if ((relC && digitalRead(WIO_KEY_C) == LOW) || c == 'f' || c == 's') { reportSet(T_LCD, false, "operator marked BAD"); waitRelease(1000); return; }
   }
   reportSet(T_LCD, false, "timeout: no confirmation");
 }
