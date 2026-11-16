@@ -8,7 +8,7 @@ const char *PageLight::title() const { return "Light & IO"; }
 static const int BAR_X = 10, BAR_Y = 54, BAR_W = 44, BAR_H = 124;
 static const int BOX_W = 64, BOX_H = 22;
 static const int BOX[K_COUNT][2] = {
-  {78, 48}, {152, 48}, {226, 48},    // A B C
+  {226, 48}, {152, 48}, {78, 48},    // A B C（对应外壳从左到右 C B A）
   {152, 78},                          // UP
   {152, 138},                         // DOWN
   {78, 108}, {226, 108},              // LEFT RIGHT
