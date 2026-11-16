@@ -1,62 +1,87 @@
 // Wio Terminal Phase 1 售后检修 / 整机测试固件
+// D-009: zero-human-blocking 6-item auto check + 6-tab interactive dashboard.
 #include <Arduino.h>
 #include "test_config.h"
 #include "report.h"
 #include "tests.h"
 #include "ui.h"
+#include "input.h"
+#include "page.h"
 
-static uint32_t s_total = 0;
-static bool s_pass = false;
+static PageAuto   s_auto;
+static PageWifi   s_wifi;
+static PageImu    s_imu;
+static PageAudio  s_audio;
+static PageLight  s_light;
+static PageSystem s_system;
 
-static void run(TestId id, const char *title, const char *msg, void (*fn)()) {
-  Serial.printf("[ .. ] %-10s start\r\n", g_results[id].name);
-  if (title) uiProgress(title, msg);
-  uint32_t t = millis();
-  fn();
-  g_results[id].ms = millis() - t;
-  if (g_results[id].status == ST_PENDING) reportSet(id, false, "no result");
+static Page *s_pages[] = {&s_auto, &s_wifi, &s_imu, &s_audio, &s_light, &s_system};
+static const int PAGE_COUNT = sizeof(s_pages) / sizeof(s_pages[0]);
+static int s_page = 0;
+
+static void switchTo(int idx, InputEvent via) {
+  if (idx < 0) idx = PAGE_COUNT - 1;
+  if (idx >= PAGE_COUNT) idx = 0;
+  s_pages[s_page]->leave();
+  s_page = idx;
+  tft.fillScreen(C::bg);
+  drawHeader(s_pages[s_page]->title(), s_page, PAGE_COUNT);
+  drawFooter(s_pages[s_page]->hint());
+  s_pages[s_page]->enter();
+  s_pages[s_page]->onNavigate(via);
+}
+
+static void handleSerial() {
+  while (Serial.available()) {
+    char c = tolower(Serial.read());
+    if (c == 'v') {
+      printVersion();
+    } else if (c == 'r') {
+      Serial.println();
+      reportPrintFinal(g_totalMs);
+    } else if (c == 't') {
+      Serial.println(F("REBOOT: NVIC_SystemReset"));
+      Serial.flush();
+      delay(30);
+      NVIC_SystemReset();
+    }
+  }
 }
 
 void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, LOW);
   Serial.begin(115200);
-  uint32_t t = millis();
-  while (!Serial && millis() - t < 1500) ledTick();   // 无串口也继续
-  uint32_t t0 = millis();
-  Serial.printf("\r\n==== Wio Terminal Factory Test %s (%s) ====\r\n", FW_VERSION, FW_BUILD_ID);
-  printVersion();
-  Serial.println(F("Manual steps fallback via serial: p=pass f=fail s=skip(fail) v=version; after summary: r=report t=retest"));
-
-  run(T_STUCK, nullptr, nullptr, testStuckKeys);    // 最先：未操作前采样
   uiInit();
-  run(T_QSPI,  "Auto 1/4: QSPI Flash", "Erase / write / verify test sector", testQspi);
-  run(T_ACC,   "Auto 2/4: Accelerometer", "Keep device still", testAccel);
-  run(T_AUDIO, "Auto 3/4: Buzzer + Mic", "Beep 4kHz...", testAudio);
-  uiProgress("Auto 4/4: RTL8720 / WiFi", "eRPC handshake + 2.4G/5G scan");
-  {
-    uint32_t t = millis();
-    testRtlAndWifi();
-    g_results[T_RTL].ms = g_results[T_WIFI].ms = millis() - t;
-  }
-  run(T_LCD,   nullptr, nullptr, testLcd);
-  run(T_KEYS,  nullptr, nullptr, testKeys);
-  run(T_LIGHT, nullptr, nullptr, testLight);
+  uiBootProgress(0, AUTO_CHECK_ITEMS, "BOOT", "USB power only; no PC required");
 
-  s_total = millis() - t0;
-  s_pass = reportAllPass();
-  uiSummary(s_total);
-  reportPrintFinal(s_total);
+  uint32_t t = millis();
+  while (!Serial && millis() - t < BOOT_SERIAL_WAIT_MS) delay(10);  // 无串口也继续
+
+  Serial.println();
+  Serial.print(F("==== Wio Terminal Factory Test "));
+  Serial.print(FW_VERSION);
+  Serial.print(F(" ("));
+  Serial.print(FW_BUILD_ID);
+  Serial.println(F(") ===="));
+  Serial.println(F("D-009: 6 auto checks then 6 tabs; no human blocking."));
+  printVersion();
+
+  hardwareBegin();
+  runAllAutoTests(true);
+  switchTo(0, InputEvent::None);
 }
 
 void loop() {
-  // PASS 慢闪 (1Hz)，FAIL 快闪 (5Hz)
-  static uint32_t t = 0;
-  if (millis() - t >= (s_pass ? 500u : 100u)) { t = millis(); digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); }
-  // 串口输入 'r' 重新打印报告
-  if (Serial.available()) {
-    char c = tolower(Serial.read());
-    if (c == 'r') reportPrintFinal(s_total);
-    else if (c == 'v') printVersion();
-    else if (c == 't') { Serial.println(F("RETEST: rebooting")); Serial.flush(); delay(50); NVIC_SystemReset(); }
-  }
+  ledHeartbeat();
+  handleSerial();
+
+  InputEvent e = pollInput();
+  if (e == InputEvent::NavLeft) { switchTo(s_page - 1, e); return; }
+  if (e == InputEvent::NavRight) { switchTo(s_page + 1, e); return; }
+  if (e != InputEvent::None) s_pages[s_page]->onInput(e);
+
+  if (s_pages[s_page]->takeFullRedraw()) { switchTo(s_page, InputEvent::None); return; }
+  s_pages[s_page]->update();
+  delay(2);
 }

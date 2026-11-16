@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Wio Terminal 测试工位：自动识别 → 版本比对 → 按需 UF2 烧录 → 串口结果伴随。
+"""Wio Terminal 测试工位：自动识别 → 版本比对 → 按需 UF2 烧录。
 
-仅依赖 Python 3 标准库，支持 Linux / macOS，不依赖 pio。
+D-009 默认只刷机（flash-only）：不等待测试跑完、不采集 logs/。设备烧录完成后
+自动运行 6 项自动检测并进入 6-Tab 交互看板。
 
-  python3 tools/auto_flash.py            # 常驻循环，连续插拔批测
-  python3 tools/auto_flash.py --once     # 只测一台
-  python3 tools/auto_flash.py --retest   # 固件已最新且停在汇总页时发 't' 重测
-  python3 tools/auto_flash.py --self-test
+  python3 tools/auto_flash.py                    # 常驻：插一台刷一台
+  python3 tools/auto_flash.py --once             # 只处理一台
+  python3 tools/auto_flash.py --retest           # 固件已最新时发 't' 重启重测
+  python3 tools/auto_flash.py --monitor          # 调试：透传串口并等待 JSON
+  python3 tools/auto_flash.py --monitor --save-log  # 调试并保存 logs/*.json/.log
+  python3 tools/auto_flash.py --self-test        # 离线自检
 """
 import argparse, glob, hashlib, json, os, re, select, struct, subprocess, sys, time
 
@@ -64,6 +67,12 @@ def parse_fw_ver(text):
     m = re.findall(r"FW_VER:([^|\r\n]+)\|([0-9A-Za-z_-]+)", text)
     return m[-1] if m else None
 
+def is_up_to_date(ver, build_id):
+    return bool(ver) and len(ver) == 2 and ver[1] == build_id
+
+def done_message():
+    return "烧录完成，设备已自动运行检测与多 Tab 看板"
+
 # ---------------------------------------------------------------- UF2 盘
 def mount_candidates():
     user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
@@ -110,23 +119,29 @@ def check_drive_current(drive, man):
 
 def flash_drive(drive, man):
     st = check_drive_current(drive, man)
-    log("UF2 盘 %s，盘内固件：%s" % (drive, {"match": "已匹配(仍写入以触发重启)", "old": "旧版/其他固件", "unknown": "未知"}[st]))
+    labels = {"match": "已匹配(仍写入以触发重启)", "old": "旧版/其他固件", "unknown": "未知"}
+    log("UF2 盘 %s，盘内固件：%s" % (drive, labels[st]))
     src = os.path.join(DIST, man["uf2_file"])
     dst = os.path.join(drive, "wio-factory-test.uf2")
     with open(src, "rb") as f:
         data = f.read()
+    written = 0
     try:
         fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
         try:
             for i in range(0, len(data), 64 * 1024):
-                os.write(fd, data[i:i + 64 * 1024])
+                written += os.write(fd, data[i:i + 64 * 1024])
             os.fsync(fd)
         finally:
             os.close(fd)
     except OSError as e:
         # 写完最后一块设备会立刻重启卸盘，fsync/close 出错属正常
         log("写入结束时盘符消失（%s），通常表示设备已重启" % e.strerror)
-    log(c("已写入 %s（build %s），等待设备重启进入测试" % (man["uf2_file"], man["build_id"]), "36"))
+    if written == 0:
+        log(c("没有写入任何数据，盘符可能已提前消失", "31"))
+        return False
+    log(c("已写入 %s（build %s），等待盘符卸载" % (man["uf2_file"], man["build_id"]), "36"))
+    return True
 
 # ---------------------------------------------------------------- 串口发现
 def linux_ports(sys_root="/sys/class/tty"):
@@ -231,7 +246,7 @@ def touch_1200(path):
             log("1200bps touch 失败：%s" % e)
 
 # ---------------------------------------------------------------- 主流程
-def query_version(s, listen=1.5, tries=3):
+def query_version(s, listen=1.2, tries=3):
     buf = ""
     end = time.time() + listen
     while time.time() < end:
@@ -239,7 +254,10 @@ def query_version(s, listen=1.5, tries=3):
     for _ in range(tries):
         if parse_fw_ver(buf):
             break
-        s.write(b"v")
+        try:
+            s.write(b"v")
+        except OSError:
+            break
         end = time.time() + 1.0
         while time.time() < end:
             buf += s.read(0.1).decode(errors="replace")
@@ -261,10 +279,11 @@ def save_result(json_line, raw):
         f.write(raw)
     return rep, stem
 
-def monitor(s, initial, timeout):
-    """透传串口直到拿到 JSON: 行。返回 True 表示拿到结果。"""
+def monitor(s, initial, timeout, save_log=False):
+    """透传串口直到拿到 JSON: 行。save_log 时才写 logs/。"""
     raw = initial
     sys.stdout.write(initial)
+    sys.stdout.flush()
     json_re = re.compile(r"^JSON:(\{.*\})\r?\n", re.M)
     end = time.time() + timeout
     while time.time() < end:
@@ -280,7 +299,15 @@ def monitor(s, initial, timeout):
         raw += data
         m = json_re.search(raw)
         if m:
-            rep, stem = save_result(m.group(1), raw)
+            rep = {}
+            stem = None
+            if save_log:
+                rep, stem = save_result(m.group(1), raw)
+            else:
+                try:
+                    rep = json.loads(m.group(1))
+                except ValueError:
+                    rep = {}
             ok = rep.get("result") == "PASS"
             print()
             print(c("=" * 60, "1"))
@@ -289,7 +316,10 @@ def monitor(s, initial, timeout):
                 if not it.get("pass"):
                     print(c("   FAIL %-10s %s" % (it.get("name"), it.get("detail")), "31"))
             print("  MAC %s  RTL %s  build %s" % (rep.get("mac"), rep.get("rtl_fw"), rep.get("build_id")))
-            print("  已保存 %s.json / .log" % stem)
+            if stem:
+                print("  已保存 %s.json / .log" % stem)
+            else:
+                print("  未保存日志（需要留档请加 --monitor --save-log）")
             print(c("=" * 60, "1"), flush=True)
             return True
     log(c("等待结果超时", "33"))
@@ -304,14 +334,65 @@ def wait_for(fn, timeout, interval=0.3):
         time.sleep(interval)
     return None
 
-def handle_uf2(drive, man):
-    flash_drive(drive, man)
-    wait_for(lambda: find_uf2_drive() is None, 8)
-    time.sleep(0.5)
-    port = wait_for(find_serial, 15)
-    if not port:
-        log(c("烧录后 15s 未出现串口，请检查 USB 线 / 设备", "31"))
+def _try_open(port):
+    try:
+        return Serial(port)
+    except OSError:
+        return None
+
+def open_monitor(port, args):
+    s = wait_for(lambda: _try_open(port), 5) if port else None
+    if not s:
+        log(c("无法打开串口进行监控", "31"))
+        return False
+    try:
+        initial = ""
+        end = time.time() + 0.5
+        while time.time() < end:
+            initial += s.read(0.1).decode(errors="replace")
+        return monitor(s, initial, args.test_timeout, args.save_log)
+    except EOFError:
+        log(c("监控期间串口断开", "33"))
+        return False
+    finally:
+        s.close()
+
+def wait_drive_gone(drive, timeout):
+    end = time.time() + timeout
+    while time.time() < end:
+        still = os.path.exists(os.path.join(drive, "INFO_UF2.TXT"))
+        if not still and find_uf2_drive() is None:
+            return True
+        time.sleep(0.2)
+    return False
+
+def confirm_running(timeout=8):
+    port = wait_for(find_serial, timeout)
+    if port:
+        log(c("设备已重启，串口 %s 已重新枚举" % port, "32"))
+    else:
+        log(c("未在 %ds 内看到应用串口；请目视屏幕确认已进入 Auto Check" % timeout, "33"))
     return port
+
+def flash_and_finish(drive, man):
+    if not flash_drive(drive, man):
+        return False
+    if not wait_drive_gone(drive, 10):
+        log(c("UF2 盘未在 10s 内卸载，烧录可能未完成", "31"))
+        return False
+    log("UF2 盘已卸载（设备已离开 Bootloader）")
+    confirm_running(8)
+    log(c(done_message(), "1;42;30"))
+    return True
+
+def handle_uf2(drive, man, args):
+    ok = flash_and_finish(drive, man)
+    if not ok:
+        return False
+    if args.monitor:
+        port = wait_for(find_serial, 10)
+        return open_monitor(port, args)
+    return True
 
 def handle_serial(port, man, args):
     log("发现串口 %s，查询固件版本..." % port)
@@ -326,19 +407,26 @@ def handle_serial(port, man, args):
         log(c("查询版本时串口断开", "33"))
         s.close()
         return False
-    if ver and ver[1] == man["build_id"]:
+
+    if is_up_to_date(ver, man["build_id"]):
         log(c("固件已是最新（%s|%s），跳过烧录" % ver, "32"))
-        if args.retest and "==== Wio" not in buf:   # 不是刚上电（多半停在汇总页）
-            log("发送 't' 重启重测")
-            s.write(b"t")
+        if args.retest or args.monitor:
+            log("发送 't' 重启，设备将重新执行自动检测")
+            try:
+                s.write(b"t")
+            except OSError:
+                pass
             s.close()
             time.sleep(1.2)
-            port = wait_for(find_serial, 10)
-            return handle_serial_after_flash(port, man, args) if port else False
-        try:
-            return monitor(s, buf, args.test_timeout)
-        finally:
-            s.close()
+            if args.monitor:
+                new_port = wait_for(find_serial, 10)
+                return open_monitor(new_port, args)
+            log(c("已触发重启；默认模式不等待测试结果", "36"))
+            return True
+        s.close()
+        log(c("设备已是最新固件，保持自动检测/看板运行", "32"))
+        return True
+
     log(c("固件不一致（%s）→ 1200bps 踢入 UF2" % ("%s|%s" % ver if ver else "无响应/非测试固件"), "33"))
     s.close()
     touch_1200(port)
@@ -349,50 +437,14 @@ def handle_serial(port, man, args):
     if not drive:
         log(c("未检测到 Arduino 盘符，放弃本台", "31"))
         return False
-    port = handle_uf2(drive, man)
-    if not port:
-        return False
-    return handle_serial_after_flash(port, man, args)
-
-def handle_serial_after_flash(port, man, args):
-    for attempt in range(2):
-        s = wait_for(lambda: _try_open(port), 5)
-        if not s:
-            return False
-        try:
-            buf = ""
-            end = time.time() + 0.4
-            while time.time() < end:
-                buf += s.read(0.1).decode(errors="replace")
-            ver = parse_fw_ver(buf)
-            if ver and ver[1] != man["build_id"]:
-                log(c("烧录后版本仍不匹配：%s" % (ver,), "31"))
-            return monitor(s, buf, args.test_timeout)
-        except EOFError:
-            s.close()
-            if attempt == 0:
-                time.sleep(0.8)
-                port = wait_for(find_serial, 10) or port
-                continue
-            log(c("串口断开（设备被拔出或重启）", "33"))
-            return False
-        finally:
-            s.close()
-    return False
-
-def _try_open(port):
-    try:
-        return Serial(port)
-    except OSError:
-        return None
+    return handle_uf2(drive, man, args)
 
 def run_one(man, args):
     log("等待 Wio Terminal 接入（串口 VID 0x2886 或 Arduino UF2 盘）...")
     while True:
         drive = find_uf2_drive()
         if drive:
-            port = handle_uf2(drive, man)
-            return handle_serial_after_flash(port, man, args) if port else False
+            return handle_uf2(drive, man, args)
         port = find_serial()
         if port:
             return handle_serial(port, man, args)
@@ -403,7 +455,23 @@ def wait_unplug():
     while find_serial() or find_uf2_drive():
         time.sleep(0.5)
 
-# ---------------------------------------------------------------- 自检
+# ---------------------------------------------------------------- 参数 / 自检
+def build_parser():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--once", action="store_true", help="只处理一台后退出")
+    ap.add_argument("--retest", action="store_true", help="固件已最新时发 't' 重启重测")
+    ap.add_argument("--monitor", action="store_true", help="调试：刷完后透传串口并等待 JSON 结果")
+    ap.add_argument("--save-log", action="store_true", help="调试留档：与 --monitor 一起用时保存 logs/")
+    ap.add_argument("--test-timeout", type=float, default=180, help="--monitor 等待 JSON 结果的秒数")
+    ap.add_argument("--uf2-timeout", type=float, default=60, help="提示双击后继续等盘符的秒数")
+    ap.add_argument("--self-test", action="store_true", help="离线自检")
+    return ap
+
+def args_error(args):
+    if args.save_log and not args.monitor:
+        return "--save-log 需要与 --monitor 一起使用"
+    return None
+
 def self_test():
     import tempfile
     ok = True
@@ -441,10 +509,21 @@ def self_test():
 
     check("parse FW_VER", parse_fw_ver("junk\r\nFW_VER:wio-factory-p1-0.1.0|2273449b\r\n") == ("wio-factory-p1-0.1.0", "2273449b"))
     check("parse FW_VER none", parse_fw_ver("hello") is None)
+    check("up-to-date compare", is_up_to_date(("wio-factory-p1-0.1.0", "2273449b"), "2273449b"))
+    check("up-to-date rejects mismatch", not is_up_to_date(("wio-factory-p1-0.1.0", "deadbeef"), "2273449b"))
+    check("done message", "烧录完成" in done_message() and "多 Tab" in done_message())
     check("INFO_UF2 wio", is_wio_uf2("UF2 Bootloader v3.7.0 SFHR\nModel: Wio Terminal\nBoard-ID: SAMD51J19A-Wio-v0\n"))
     check("INFO_UF2 other board rejected", not is_wio_uf2("UF2 Bootloader\nModel: Raspberry Pi RP2\nBoard-ID: RPI-RP2\n"))
     check("ioreg VID match", mac_seeed_present('| "idVendor" = 10374\n'))
     check("ioreg VID no match", not mac_seeed_present('| "idVendor" = 1027\n| "idVendor" = 103740\n'))
+
+    ap = build_parser()
+    a = ap.parse_args([])
+    check("default is flash-only", not a.monitor and not a.save_log and not a.retest and not a.once)
+    a = ap.parse_args(["--monitor", "--save-log"])
+    check("monitor + save-log args", a.monitor and a.save_log and args_error(a) is None)
+    a = ap.parse_args(["--save-log"])
+    check("save-log requires monitor", args_error(a) is not None)
 
     with tempfile.TemporaryDirectory() as td:  # 伪造 /sys/class/tty 结构
         def fake(tty, vid, pid):
@@ -473,19 +552,21 @@ def self_test():
     return 0 if ok else 1
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--once", action="store_true", help="只测一台后退出")
-    ap.add_argument("--retest", action="store_true", help="固件已最新时发 't' 重启重测")
-    ap.add_argument("--test-timeout", type=float, default=180, help="等待 JSON 结果的秒数")
-    ap.add_argument("--uf2-timeout", type=float, default=60, help="提示双击后继续等盘符的秒数")
-    ap.add_argument("--self-test", action="store_true", help="离线自检")
+    ap = build_parser()
     args = ap.parse_args()
     if args.self_test:
         sys.exit(self_test())
     if os.name != "posix":
         sys.exit("仅支持 Linux / macOS")
+    err = args_error(args)
+    if err:
+        ap.error(err)
     man = load_manifest()
     log("目标固件 %s | build %s（%s）" % (man["fw_version"], man["build_id"], os.path.join(DIST, man["uf2_file"])))
+    if args.monitor:
+        log("调试模式：将等待 JSON 结果%s" % ("并保存 logs/" if args.save_log else "，不保存日志"))
+    else:
+        log("flash-only 模式：烧录完成后立即结束，不等待测试结果")
     try:
         while True:
             ok = run_one(man, args)

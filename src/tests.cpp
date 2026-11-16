@@ -7,56 +7,74 @@
 #include "test_config.h"
 #include "report.h"
 #include "tests.h"
+#include "input.h"
 #include "ui.h"
 
 // ---------------- 公共 ----------------
-struct KeyDef { uint8_t pin; const char *name; };
-static const KeyDef KEYS[8] = {
-  {WIO_KEY_A, "KEY_A"}, {WIO_KEY_B, "KEY_B"}, {WIO_KEY_C, "KEY_C"},
-  {WIO_5S_UP, "5S_UP"}, {WIO_5S_DOWN, "5S_DOWN"}, {WIO_5S_LEFT, "5S_LEFT"},
-  {WIO_5S_RIGHT, "5S_RIGHT"}, {WIO_5S_PRESS, "5S_PRESS"},
-};
-static inline bool pressed(uint8_t i) { return digitalRead(KEYS[i].pin) == LOW; }
+static inline bool pressed(int i) { return digitalRead(KEY_DEFS[i].pin) == LOW; }
+
+static LIS3DHTR<TwoWire> s_acc;
+static bool s_imuReady = false;
+static uint8_t s_imuId = 0;
+static int s_micBias = 512;
+
+void hardwareBegin() {
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, LOW);
+  pinMode(WIO_MIC, INPUT);
+  pinMode(WIO_LIGHT, INPUT);
+  pinMode(WIO_BUZZER, OUTPUT);
+  digitalWrite(WIO_BUZZER, LOW);
+  inputBegin();
+  // 统一 10bit ADC：AUDIO_MIN_P2P、WIO_LIGHT、WIO_MIC 波形全部按 0..1023
+  analogReadResolution(10);
+  micCalibrate();
+}
+
+void ledHeartbeat() {
+  static uint32_t last = 0;
+  static bool level = false;
+  uint32_t period = reportAllPass() ? 500u : 100u;  // 1Hz PASS / 5Hz REPAIR
+  if (millis() - last >= period) {
+    last = millis();
+    level = !level;
+    digitalWrite(LED_BUILTIN, level ? HIGH : LOW);
+  }
+}
 
 void ledTick() {
-  if (Serial.available() && tolower(Serial.peek()) == 'v') { Serial.read(); printVersion(); }  // 任何等待中都能查版本
+  if (Serial.available() && tolower(Serial.peek()) == 'v') { Serial.read(); printVersion(); }
   static uint32_t t = 0;
   if (millis() - t >= 150) { t = millis(); digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); }
 }
 
-char serialCmd() {
-  while (Serial.available()) {
-    char c = tolower(Serial.read());
-    if (c == 'v') printVersion();
-    else if (c == 'p' || c == 'f' || c == 's') return c;
-  }
-  return 0;
-}
-
-static void waitRelease(uint32_t maxMs) {
+bool keysReleased(uint32_t timeoutMs) {
   uint32_t t = millis();
-  while (millis() - t < maxMs) {
+  while (millis() - t < timeoutMs) {
     bool any = false;
-    for (int i = 0; i < 8; i++) any |= pressed(i);
-    if (!any) break;
+    for (int i = 0; i < K_COUNT; i++) any |= pressed(i);
+    if (!any) return true;
     ledTick();
+    delay(5);
   }
-  delay(30);
+  return false;
 }
 
 // ---------------- 1. 按键粘连 ----------------
 void testStuckKeys() {
-  for (auto &k : KEYS) pinMode(k.pin, INPUT_PULLUP);
+  for (auto &k : KEY_DEFS) pinMode(k.pin, INPUT_PULLUP);
   delay(20);
   uint8_t stuckMask = 0xFF;
   uint32_t t = millis();
   while (millis() - t < STUCK_CHECK_MS) {    // 持续按下才算粘连
-    for (int i = 0; i < 8; i++) if (!pressed(i)) stuckMask &= ~(1 << i);
+    for (int i = 0; i < K_COUNT; i++) if (!pressed(i)) stuckMask &= ~(1 << i);
     delay(5);
   }
   if (!stuckMask) { reportSet(T_STUCK, true, "no key held at boot"); return; }
   char buf[96] = "stuck:";
-  for (int i = 0; i < 8; i++) if (stuckMask & (1 << i)) { strlcat(buf, " ", sizeof buf); strlcat(buf, KEYS[i].name, sizeof buf); }
+  for (int i = 0; i < K_COUNT; i++) {
+    if (stuckMask & (1 << i)) { strlcat(buf, " ", sizeof buf); strlcat(buf, KEY_DEFS[i].name, sizeof buf); }
+  }
   reportSet(T_STUCK, false, "%s", buf);
 }
 
@@ -76,6 +94,7 @@ void testQspi() {
   if (!f || f->chip.capacity < QSPI_TEST_ADDR + QSPI_TEST_SIZE) {
     reportSet(T_QSPI, false, "capacity %lu too small", f ? (unsigned long)f->chip.capacity : 0UL); return;
   }
+  g_qspiCapacity = f->chip.capacity;
 #if QSPI_RESTORE_SECTOR
   if (sfud_read(f, QSPI_TEST_ADDR, QSPI_TEST_SIZE, s_backup) != SFUD_SUCCESS) { reportSet(T_QSPI, false, "backup read err"); return; }
 #endif
@@ -100,41 +119,85 @@ void testQspi() {
 }
 
 // ---------------- 3. 加速度计 ----------------
-static LIS3DHTR<TwoWire> s_acc;
-void testAccel() {
+bool imuBegin(bool force) {
+  if (s_imuReady && !force) return true;
+  s_imuReady = false;
   s_acc.begin(Wire1);
   delay(50);
-  uint8_t id = s_acc.getDeviceID();
-  if (id != ACC_WHO_AM_I) { reportSet(T_ACC, false, "WHO_AM_I 0x%02X != 0x%02X", id, ACC_WHO_AM_I); return; }
+  s_imuId = s_acc.getDeviceID();
+  if (s_imuId != ACC_WHO_AM_I) return false;
   s_acc.setOutputDataRate(LIS3DHTR_DATARATE_100HZ);
   s_acc.setFullScaleRange(LIS3DHTR_RANGE_2G);
-  delay(100);
+  delay(10);
+  s_imuReady = true;
+  return true;
+}
+
+bool imuOnline() { return s_imuReady; }
+uint8_t imuDeviceId() { return s_imuId; }
+
+bool imuRead(float &x, float &y, float &z) {
+  if (!s_imuReady) return false;
+  s_acc.getAcceleration(&x, &y, &z);
+  return true;
+}
+
+void testAccel() {
+  if (!imuBegin(true)) {
+    reportSet(T_ACC, false, "WHO_AM_I 0x%02X != 0x%02X", s_imuId, ACC_WHO_AM_I);
+    return;
+  }
   float sum = 0;
   for (int i = 0; i < 10; i++) {
-    float x, y, z; s_acc.getAcceleration(&x, &y, &z);
-    sum += sqrtf(x * x + y * y + z * z); delay(12);
+    float x = 0, y = 0, z = 0;
+    imuRead(x, y, z);
+    sum += sqrtf(x * x + y * y + z * z);
+    delay(12);
   }
   float g = sum / 10;
   reportSet(T_ACC, g >= ACC_G_MIN && g <= ACC_G_MAX, "id 0x33 |a|=%.2fg (%.2f~%.2f)", g, ACC_G_MIN, ACC_G_MAX);
 }
 
 // ---------------- 4. 蜂鸣器 + 麦克风 ----------------
+void micCalibrate() {
+  uint32_t acc = 0;
+  const int n = 256;
+  for (int i = 0; i < n; i++) {
+    acc += analogRead(WIO_MIC);
+    delayMicroseconds(120);
+  }
+  s_micBias = acc / n;
+}
+
+int micBias() { return s_micBias; }
+int readMicRaw() { return analogRead(WIO_MIC); }
+int readLightRaw() { return analogRead(WIO_LIGHT); }
+
+void toneStart(int hz) { tone(WIO_BUZZER, hz); }
+void toneStop() { noTone(WIO_BUZZER); digitalWrite(WIO_BUZZER, LOW); }
+void playTone(int hz, int ms) {
+  if (hz <= 0 || ms <= 0) return;
+  toneStart(hz);
+  delay(ms);
+  toneStop();
+}
+
 static int micP2P(uint32_t ms) {
-  int lo = 4095, hi = 0;
+  int lo = 1023, hi = 0;
   uint32_t t = millis();
   while (millis() - t < ms) { int v = analogRead(WIO_MIC); lo = min(lo, v); hi = max(hi, v); }
   return hi - lo;
 }
+
 void testAudio() {
   pinMode(WIO_MIC, INPUT);
   pinMode(WIO_BUZZER, OUTPUT);
   micP2P(20);
   int noise = micP2P(AUDIO_NOISE_MS);
-  tone(WIO_BUZZER, AUDIO_TONE_HZ);
+  toneStart(AUDIO_TONE_HZ);
   delay(20);
   int sig = micP2P(AUDIO_SAMPLE_MS);
-  noTone(WIO_BUZZER);
-  digitalWrite(WIO_BUZZER, LOW);
+  toneStop();
   float ratio = (float)sig / max(noise, 1);
   bool ok = sig >= AUDIO_MIN_P2P && ratio >= AUDIO_RATIO_MIN;
   reportSet(T_AUDIO, ok, "noise p2p %d, tone p2p %d, x%.1f%s", noise, sig, ratio, ok ? "" : " (buzzer or mic bad)");
@@ -146,10 +209,12 @@ static bool macValid(const uint8_t *m) {
   for (int i = 0; i < 6; i++) { all0 &= m[i] == 0; allF &= m[i] == 0xFF; }
   return !all0 && !allF;
 }
-void testRtlAndWifi() {
+
+bool testRtl() {
   // 注意：若 RTL8720 完全无响应，eRPC 调用可能阻塞；进入前已打印日志，串口停在此处即判定 RTL8720 故障
   Serial.println(F("[ .. ] RTL8720    eRPC handshake (hang here = RTL8720 dead)"));
   const char *ver = rpc_system_version();
+  snprintf(g_rtlVer, sizeof g_rtlVer, "N/A");
   if (ver && *ver) strlcpy(g_rtlVer, ver, sizeof g_rtlVer);
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
@@ -159,11 +224,27 @@ void testRtlAndWifi() {
   snprintf(g_mac, sizeof g_mac, "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   bool rtlOk = ver && *ver && macValid(mac);
   reportSet(T_RTL, rtlOk, "ver %s mac %s", g_rtlVer, g_mac);
-  if (!rtlOk && !(ver && *ver)) { reportSet(T_WIFI, false, "skipped: RTL8720 no response"); return; }
+  return rtlOk;
+}
+
+void testWifi(bool rtlOk) {
+  g_rssi2 = g_rssi5 = -127;
+  g_wifiFallback = false;
+  snprintf(g_ssid, sizeof g_ssid, "-");
+  snprintf(g_ip, sizeof g_ip, "-");
+  snprintf(g_gw, sizeof g_gw, "-");
+
+  if (!rtlOk) {
+    snprintf(g_wifiStatus, sizeof g_wifiStatus, "skipped: RTL8720 offline");
+    reportSet(T_WIFI, false, "skipped: RTL8720 no response");
+    return;
+  }
 
   const bool targeted = strlen(WIFI_SSID_2G) || strlen(WIFI_SSID_5G);
   g_wifiFallback = !targeted;
+  snprintf(g_wifiStatus, sizeof g_wifiStatus, "scanning 2.4G/5G");
   int best2 = -127, best5 = -127, n = 0;
+  char bestName2[33] = "", bestName5[33] = "";
   for (int attempt = 0; attempt < WIFI_SCAN_RETRIES; attempt++) {
     n = WiFi.scanNetworks();
     for (int i = 0; i < n; i++) {
@@ -172,27 +253,37 @@ void testRtlAndWifi() {
       bool is5 = ch > 14;
       Serial.printf("       scan: %-24.24s ch%3d %4d dBm\r\n", ssid.c_str(), ch, rssi);
       if (targeted) {
-        if (!is5 && strlen(WIFI_SSID_2G) && ssid == WIFI_SSID_2G) best2 = max(best2, rssi);
-        if (is5 && strlen(WIFI_SSID_5G) && ssid == WIFI_SSID_5G) best5 = max(best5, rssi);
+        if (!is5 && strlen(WIFI_SSID_2G) && ssid == WIFI_SSID_2G && rssi > best2) {
+          best2 = rssi; strlcpy(bestName2, ssid.c_str(), sizeof bestName2);
+        }
+        if (is5 && strlen(WIFI_SSID_5G) && ssid == WIFI_SSID_5G && rssi > best5) {
+          best5 = rssi; strlcpy(bestName5, ssid.c_str(), sizeof bestName5);
+        }
       } else {
-        if (is5) best5 = max(best5, rssi); else best2 = max(best2, rssi);
+        if (is5 && rssi > best5) { best5 = rssi; strlcpy(bestName5, ssid.c_str(), sizeof bestName5); }
+        if (!is5 && rssi > best2) { best2 = rssi; strlcpy(bestName2, ssid.c_str(), sizeof bestName2); }
       }
     }
     WiFi.scanDelete();
     bool need2 = !targeted || strlen(WIFI_SSID_2G), need5 = !targeted || strlen(WIFI_SSID_5G);
     if ((!need2 || best2 >= WIFI_RSSI_MIN_DBM) && (!need5 || best5 >= WIFI_RSSI_MIN_DBM)) break;
   }
+  g_rssi2 = best2;
+  g_rssi5 = best5;
   bool need2 = !targeted || strlen(WIFI_SSID_2G), need5 = !targeted || strlen(WIFI_SSID_5G);
   bool ok2 = !need2 || best2 >= WIFI_RSSI_MIN_DBM, ok5 = !need5 || best5 >= WIFI_RSSI_MIN_DBM;
   Serial.printf("       scan result: 2G %d 5G %d (min %d)%s\r\n", best2, best5, WIFI_RSSI_MIN_DBM,
                 targeted ? "" : " [fallback]");
-  char scan[32];
+  char scan[40];
   snprintf(scan, sizeof scan, "%s2G:%d 5G:%d", targeted ? "" : "fb ", best2, best5);
   bool scanOk = ok2 && ok5;
 
 #if WIFI_CONNECT_ENABLE
   if (strlen(WIFI_CONNECT_SSID)) {
-    Serial.printf("       connecting to %s ...\r\n", WIFI_CONNECT_SSID);
+    snprintf(g_wifiStatus, sizeof g_wifiStatus, "connecting %s", WIFI_CONNECT_SSID);
+    Serial.print(F("       connecting to "));
+    Serial.print(WIFI_CONNECT_SSID);
+    Serial.println(F(" ..."));
     WiFi.begin(WIFI_CONNECT_SSID, WIFI_CONNECT_PASS);
     uint32_t t = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - t < WIFI_CONNECT_TIMEOUT_MS) { ledTick(); delay(50); }
@@ -203,118 +294,76 @@ void testRtlAndWifi() {
     while (conn && !ipOk && millis() - t < WIFI_CONNECT_TIMEOUT_MS) {
       ledTick(); delay(100); ip = WiFi.localIP(); ipOk = ip != IPAddress(0, 0, 0, 0);
     }
-    Serial.printf("       wifi status %d ip %s ", st, ip.toString().c_str());
-    Serial.printf("gw %s rssi %d (%lu ms)\r\n", WiFi.gatewayIP().toString().c_str(),
-                  conn ? (int)WiFi.RSSI() : 0, (unsigned long)(millis() - t));
+    IPAddress gw = conn ? WiFi.gatewayIP() : IPAddress(0, 0, 0, 0);
+    if (conn) {
+      snprintf(g_ip, sizeof g_ip, "%s", ip.toString().c_str());
+      snprintf(g_gw, sizeof g_gw, "%s", gw.toString().c_str());
+      strlcpy(g_ssid, WIFI_CONNECT_SSID, sizeof g_ssid);
+    } else if (bestName2[0]) {
+      strlcpy(g_ssid, bestName2, sizeof g_ssid);
+    }
+    Serial.print(F("       wifi status "));
+    Serial.print(st);
+    Serial.print(F(" ip "));
+    Serial.print(ip.toString().c_str());
+    Serial.print(F(" gw "));
+    Serial.print(gw.toString().c_str());
+    Serial.print(F(" rssi "));
+    Serial.print(conn ? (int)WiFi.RSSI() : 0);
+    Serial.print(F(" ("));
+    Serial.print((unsigned long)(millis() - t));
+    Serial.println(F(" ms)"));
     WiFi.disconnect(true);
-    if (!conn) reportSet(T_WIFI, false, "%s conn %s", scan, millis() - t >= WIFI_CONNECT_TIMEOUT_MS ? "timeout" : "fail");
-    else if (!ipOk) reportSet(T_WIFI, false, "%s no IP", scan);
-    else reportSet(T_WIFI, scanOk, "%s IP:%s%s", scan, ip.toString().c_str(), scanOk ? "" : " RSSI<min");
+    if (!conn) {
+      snprintf(g_wifiStatus, sizeof g_wifiStatus, "connect %s",
+               millis() - t >= WIFI_CONNECT_TIMEOUT_MS ? "timeout" : "fail");
+      reportSet(T_WIFI, false, "%s conn %s", scan,
+                millis() - t >= WIFI_CONNECT_TIMEOUT_MS ? "timeout" : "fail");
+    } else if (!ipOk) {
+      snprintf(g_wifiStatus, sizeof g_wifiStatus, "connected, no DHCP IP");
+      reportSet(T_WIFI, false, "%s no IP", scan);
+    } else {
+      snprintf(g_wifiStatus, sizeof g_wifiStatus, "connected, DHCP ok");
+      reportSet(T_WIFI, scanOk, "%s IP:%s%s", scan, g_ip, scanOk ? "" : " RSSI<min");
+    }
     return;
   }
 #endif
+  snprintf(g_wifiStatus, sizeof g_wifiStatus, "scan only");
+  if (bestName2[0]) strlcpy(g_ssid, bestName2, sizeof g_ssid);
+  else if (bestName5[0]) strlcpy(g_ssid, bestName5, sizeof g_ssid);
   reportSet(T_WIFI, scanOk, "%s (min %d)%s", scan, WIFI_RSSI_MIN_DBM, n <= 0 ? " no AP" : "");
 }
 
-// ---------------- 7. LCD + 背光 ----------------
-void testLcd() {
-  const uint16_t colors[] = {TFT_RED, TFT_GREEN, TFT_BLUE, TFT_WHITE, TFT_BLACK};
-  for (uint16_t c : colors) { tft.fillScreen(c); uint32_t t = millis(); while (millis() - t < LCD_COLOR_MS) ledTick(); }
-  tft.fillScreen(TFT_WHITE);
-  // 软件 PWM 渐变：1kHz 载波，占空比 0→100→0%，约 1.6s
-  for (int step = 0; step <= 80; step++) {
-    int duty = step <= 40 ? step * 25 : (80 - step) * 25;   // 0..1000 us / 1000 us 周期
-    for (int cyc = 0; cyc < 20; cyc++) {
-      if (duty > 0) { backlight(1); delayMicroseconds(duty); }
-      if (duty < 1000) { backlight(0); delayMicroseconds(1000 - duty); }
-    }
-    ledTick();
-  }
-  backlight(255);
-  waitRelease(1000);
-  bool relA = digitalRead(WIO_KEY_A) == HIGH, relC = digitalRead(WIO_KEY_C) == HIGH;
-  uiProgress("LCD / Backlight", "A = display OK    C = display BAD   (serial: p / f)");
-  tft.setTextSize(2);
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.drawString("Colors & dimming OK?", 10, 140);
-  uint32_t t0 = millis();
-  while (millis() - t0 < LCD_CONFIRM_TIMEOUT_MS) {
-    ledTick();
-    if (digitalRead(WIO_KEY_A) == HIGH) relA = true;
-    if (digitalRead(WIO_KEY_C) == HIGH) relC = true;
-    char c = serialCmd();
-    if ((relA && digitalRead(WIO_KEY_A) == LOW) || c == 'p') { reportSet(T_LCD, true, "operator confirmed"); waitRelease(1000); return; }
-    if ((relC && digitalRead(WIO_KEY_C) == LOW) || c == 'f' || c == 's') { reportSet(T_LCD, false, "operator marked BAD"); waitRelease(1000); return; }
-  }
-  reportSet(T_LCD, false, "timeout: no confirmation");
+void testWireless() {
+  bool rtlOk = testRtl();
+  testWifi(rtlOk);
 }
 
-// ---------------- 8. 按键 + 摇杆 ----------------
-static const int16_t BOX[8][2] = {   // x,y (左上角)，上排 C B A 对应外壳从左到右
-  {224, 40}, {132, 40}, {40, 40},
-  {132, 110}, {132, 190}, {72, 150}, {192, 150}, {132, 150},
-};
-static void drawBox(int i, uint16_t c) {
-  tft.fillRoundRect(BOX[i][0], BOX[i][1], 56, 34, 5, c);
-  tft.setTextColor(TFT_BLACK, c); tft.setTextSize(1);
-  tft.drawCentreString(KEYS[i].name, BOX[i][0] + 28, BOX[i][1] + 13, 1);
-}
-void testKeys() {
-  tft.fillScreen(TFT_BLACK);
-  tft.setTextColor(TFT_YELLOW, TFT_BLACK); tft.setTextSize(1);
-  tft.drawString("Press every key once (serial: p=ok f=fail)", 10, 8);
-  // 粘连的键不能拿来算通过
-  uint8_t done = 0;
-  bool stuck[8] = {false};
-  for (int i = 0; i < 8; i++) { stuck[i] = pressed(i); drawBox(i, stuck[i] ? TFT_ORANGE : TFT_DARKGREY); }
-  bool released[8]; for (int i = 0; i < 8; i++) released[i] = !stuck[i];
+// ---------------- 自动检查总流程 ----------------
+void runAllAutoTests(bool showProgress) {
+  if (showProgress) uiBootProgress(0, AUTO_CHECK_ITEMS, "STUCK_KEY", "sampling 8 keys before boot");
+  // 重测时 A 键可能仍被按住，先等操作员松手，避免误判粘连
+  keysReleased(KEYS_RELEASE_WAIT_MS);
   uint32_t t0 = millis();
-  while (done != 0xFF && millis() - t0 < KEYS_TIMEOUT_MS) {
-    ledTick();
-    for (int i = 0; i < 8; i++) {
-      bool p = pressed(i);
-      if (!p) released[i] = true;
-      if (p && released[i] && !(done & (1 << i))) { done |= 1 << i; drawBox(i, TFT_GREEN); Serial.printf("       key %s ok\r\n", KEYS[i].name); }
-    }
-    char c = serialCmd();
-    if (c == 'p') { reportSet(T_KEYS, true, "serial confirmed"); return; }
-    if (c == 'f' || c == 's') break;
-    char cd[16]; snprintf(cd, sizeof cd, "%2lus ", (unsigned long)((KEYS_TIMEOUT_MS - (millis() - t0)) / 1000));
-    tft.setTextColor(TFT_WHITE, TFT_BLACK); tft.drawString(cd, 290, 8);
-    delay(5);
-  }
-  if (done == 0xFF) { reportSet(T_KEYS, true, "all 8 keys triggered"); return; }
-  char buf[96] = "no resp:";
-  for (int i = 0; i < 8; i++) if (!(done & (1 << i))) { drawBox(i, TFT_RED); strlcat(buf, " ", sizeof buf); strlcat(buf, KEYS[i].name, sizeof buf); }
-  reportSet(T_KEYS, false, "%s", buf);
-  delay(800);
-}
+  testStuckKeys();
 
-// ---------------- 9. 光敏 ----------------
-static int lightAvg() { long s = 0; for (int i = 0; i < 16; i++) s += analogRead(WIO_LIGHT); return s / 16; }
-void testLight() {
-  pinMode(WIO_LIGHT, INPUT);
-  int base = lightAvg();
-  // 允许设备平放桌面导致初始遮挡：先记录峰值(需 >= LIGHT_MIN_BASELINE)，再检测相对峰值跌落
-  uiProgress("Light sensor", "Lift/light back window, then cover it  (serial: f=fail)");
-  int maxV = base, minAfterPeak = base;
-  uint32_t t0 = millis();
-  while (millis() - t0 < LIGHT_TIMEOUT_MS) {
-    ledTick();
-    int v = lightAvg();
-    if (v > maxV) { maxV = v; minAfterPeak = v; }
-    if (v < minAfterPeak) minAfterPeak = v;
-    char s[44]; snprintf(s, sizeof s, "now %4d  peak %4d  ", v, maxV);
-    tft.setTextSize(2); tft.setTextColor(TFT_WHITE, TFT_BLACK); tft.drawString(s, 10, 140);
-    int target = (int)(maxV * (1.0f - LIGHT_DROP_RATIO));
-    if (maxV >= LIGHT_MIN_BASELINE && minAfterPeak <= target) {
-      reportSet(T_LIGHT, true, "peak %d -> %d (drop>=%d%%)", maxV, minAfterPeak, (int)(LIGHT_DROP_RATIO * 100));
-      return;
-    }
-    char c = serialCmd();
-    if (c == 'p') { reportSet(T_LIGHT, true, "serial confirmed"); return; }
-    if (c == 'f' || c == 's') break;
-    delay(20);
-  }
-  reportSet(T_LIGHT, false, "timeout: peak %d low %d (need>=%d)", maxV, minAfterPeak, LIGHT_MIN_BASELINE);
+  if (showProgress) uiBootProgress(1, AUTO_CHECK_ITEMS, "QSPI_FLASH", "erase / write / verify 4KB sector");
+  testQspi();
+
+  if (showProgress) uiBootProgress(2, AUTO_CHECK_ITEMS, "ACCEL", "LIS3DHTR @ Wire1  +/-2g static check");
+  testAccel();
+
+  if (showProgress) uiBootProgress(3, AUTO_CHECK_ITEMS, "BUZZER_MIC", "4kHz tone -> WIO_MIC closed loop");
+  testAudio();
+
+  if (showProgress) uiBootProgress(4, AUTO_CHECK_ITEMS, "RTL8720", "eRPC handshake + MAC address");
+  bool rtlOk = testRtl();
+
+  if (showProgress) uiBootProgress(5, AUTO_CHECK_ITEMS, "WIFI_2G5G", "dual-band scan + DHCP connect");
+  testWifi(rtlOk);
+
+  g_totalMs = millis() - t0;
+  printVersion();
+  reportPrintFinal(g_totalMs);
 }

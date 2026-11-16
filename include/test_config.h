@@ -31,16 +31,23 @@
 #define AUDIO_MIN_P2P       120     // 发声期峰峰值最小 ADC 计数（10bit）
 #define AUDIO_RATIO_MIN     2.0f    // 发声期峰峰值 / 底噪峰峰值 最小倍数
 
-// ---------- 光敏 ----------
-#define LIGHT_DROP_RATIO    0.40f   // 相对基线下降 >= 40% 即通过
-#define LIGHT_MIN_BASELINE  30      // 基线过低（环境太暗/开路）直接 FAIL
-#define LIGHT_TIMEOUT_MS    10000
+// ---------- 自动检查 / 启动 ----------
+#define STUCK_CHECK_MS          300   // 持续按下这么久才算粘连
+#define KEYS_RELEASE_WAIT_MS    1500  // 重测前等上一位操作员松手
+#define BOOT_SERIAL_WAIT_MS     800   // 仅等待 USB 枚举，绝不无限阻塞
+#define AUTO_CHECK_ITEMS        6
 
-// ---------- 人工交互超时 ----------
-#define LCD_COLOR_MS        700
-#define LCD_CONFIRM_TIMEOUT_MS 10000  // 超时未确认记 FAIL(timeout)
-#define KEYS_TIMEOUT_MS     15000
-#define STUCK_CHECK_MS      300
+// ---------- 交互看板 ----------
+// 所有 ADC 统一 10bit（analogReadResolution(10)），与 AUDIO_MIN_P2P 对应
+#define IMU_FRAME_MS        40
+#define AUDIO_FRAME_MS      33
+#define AUDIO_BEEP_MS       180
+#define LIGHT_FRAME_MS      100
+#define SYS_FRAME_MS        250
+#define LCD_COLOR_MS        650
+#define LCD_RAMP_STEPS      80
+#define LCD_RAMP_CYCLES     20
+#define LCD_RAMP_HALF_US    1000  // 1kHz 软件 PWM 载波
 
 // ---------- Phase 2 / 待定项（默认关闭，目前无实现） ----------
 #define ENABLE_SD_TEST      0
